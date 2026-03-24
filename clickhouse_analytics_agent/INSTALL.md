@@ -12,7 +12,7 @@
 - Root-доступ по SSH
 - DNS A-запись `servermagnetto.asktab.ru → 91.218.114.183` уже активна
 - Порты 22, 80, 443 открыты в firewall
-- Доступ к ClickHouse (self-hosted или Яндекс Cloud)
+- Доступ к ClickHouse (self-hosted)
 - API ключ OpenRouter (`sk-or-v1-...`)
 
 ---
@@ -97,19 +97,7 @@ python -c "import langgraph, langchain_openai, clickhouse_connect, pandas, matpl
 
 ---
 
-## Шаг 4. SSL сертификат Яндекс Cloud (только для Яндекс ClickHouse)
-
-> Пропустите этот шаг, если ClickHouse self-hosted с Let's Encrypt или без SSL.
-
-```bash
-cd /root/clickhouse_analytics_agent
-curl https://storage.yandexcloud.net/cloud-certs/CA.pem -o YandexInternalRootCA.crt
-ls -lh YandexInternalRootCA.crt
-```
-
----
-
-## Шаг 5. Настройка переменных окружения
+## Шаг 4. Настройка переменных окружения
 
 ```bash
 cd /root/clickhouse_analytics_agent
@@ -135,8 +123,7 @@ CLICKHOUSE_USER=your_user
 CLICKHOUSE_PASSWORD=your_password
 CLICKHOUSE_DATABASE=your_database
 
-# Путь к CA-сертификату (для Яндекс Cloud: YandexInternalRootCA.crt)
-# Оставьте пустым, если ClickHouse использует доверенный CA (Let's Encrypt)
+# Self-hosted с Let's Encrypt — оставьте пустым (доверенный CA)
 CLICKHOUSE_SSL_CERT_PATH=
 
 # ─── Server ───────────────────────────────────────────────────────────────────
@@ -150,7 +137,7 @@ MAX_AGENT_ITERATIONS=15
 TEMP_FILE_TTL_SECONDS=3600
 ```
 
-Сохраните: `Ctrl+O`, `Enter`, `Ctrl+X`.
+Сохраните файл: `Ctrl+O`, `Enter`, `Ctrl+X`.
 
 Проверка (не должно быть пустых обязательных полей):
 ```bash
@@ -159,7 +146,7 @@ grep -E '^(OPENROUTER_API_KEY|CLICKHOUSE_HOST|CLICKHOUSE_USER|CLICKHOUSE_PASSWOR
 
 ---
 
-## Шаг 6. Проверка подключения к ClickHouse
+## Шаг 5. Проверка подключения к ClickHouse
 
 ```bash
 cd /root/clickhouse_analytics_agent
@@ -176,8 +163,6 @@ client = clickhouse_connect.get_client(
     password=CLICKHOUSE_PASSWORD,
     database=CLICKHOUSE_DATABASE,
     secure=True,
-    verify=bool(CLICKHOUSE_SSL_CERT),
-    ca_cert=CLICKHOUSE_SSL_CERT or None,
 )
 print('Connected! Tables:', client.query('SHOW TABLES').result_rows[:5])
 "
@@ -188,12 +173,14 @@ print('Connected! Tables:', client.query('SHOW TABLES').result_rows[:5])
 Connected! Tables: [('table1',), ('table2',), ...]
 ```
 
-Если ошибка `certificate verify failed` — проверьте `CLICKHOUSE_SSL_CERT_PATH` в `.env`.  
-Если ошибка `Connection refused` — проверьте хост и порт.
+Если ошибка `Connection refused` — проверьте хост и порт:  
+```bash
+nc -zv your-clickhouse-host.example.com 8443
+```
 
 ---
 
-## Шаг 7. Настройка Firewall (UFW)
+## Шаг 6. Настройка Firewall (UFW)
 
 ```bash
 ufw allow 22/tcp    # SSH
@@ -211,9 +198,11 @@ Status: active
 443/tcp  ALLOW
 ```
 
+> Порт `8000` **не открывать** публично — uvicorn слушает только через Nginx.
+
 ---
 
-## Шаг 8. Настройка systemd (автозапуск сервиса)
+## Шаг 7. Настройка systemd (автозапуск сервиса)
 
 ```bash
 # Копируем unit-файл
@@ -259,7 +248,7 @@ journalctl -u analytics-agent -f
 
 ---
 
-## Шаг 9. Настройка Nginx
+## Шаг 8. Настройка Nginx
 
 ```bash
 # Копируем конфиг
@@ -285,12 +274,12 @@ systemctl reload nginx
 
 ---
 
-## Шаг 10. Получение HTTPS сертификата (Let's Encrypt)
+## Шаг 9. Получение HTTPS сертификата (Let's Encrypt)
 
-> ⚠️ Этот шаг выполняется **после** того как DNS `servermagnetto.asktab.ru → 91.218.114.183` работает и Nginx запущен!
+> ⚠️ DNS-запись `servermagnetto.asktab.ru → 91.218.114.183` должна уже работать и Nginx должен быть запущен!
 
 ```bash
-# Проверяем, что домен доступен по HTTP перед запросом сертификата
+# Проверяем доступность домена по HTTP перед запросом сертификата
 curl -I http://servermagnetto.asktab.ru
 # Ожидаемый результат: HTTP/1.1 301 Moved Permanently
 
@@ -313,7 +302,7 @@ systemctl reload nginx
 
 ---
 
-## Шаг 11. Проверка работы API
+## Шаг 10. Проверка работы API
 
 ```bash
 # Health check
@@ -339,12 +328,12 @@ https://servermagnetto.asktab.ru/docs
 
 ---
 
-## Автоматическая установка (альтернатива шагам 2–8)
+## Автоматическая установка (альтернатива шагам 2–7)
 
-Вместо ручного выполнения шагов 2–8 можно запустить скрипт `setup.sh`:
+Вместо ручного выполнения шагов 2–7 можно запустить скрипт `setup.sh`:
 
 ```bash
-# После клонирования репозитория (шаг 1) и перед настройкой .env (шаг 5)
+# После клонирования репозитория (шаг 1) и перед настройкой .env (шаг 4)
 cd /root/clickhouse_analytics_agent
 chmod +x setup.sh
 bash setup.sh
@@ -353,12 +342,11 @@ bash setup.sh
 Скрипт автоматически:
 - Установит системные пакеты
 - Создаст Python venv и установит зависимости
-- Скачает сертификат Яндекс Cloud
 - Создаст `.env` из `.env.example`
 - Установит и включит systemd-сервис
 - Настроит Nginx
 
-После `setup.sh` вернитесь к **Шагу 5** для заполнения `.env`, затем выполните шаги 10–11.
+После `setup.sh` вернитесь к **Шагу 4** для заполнения `.env`, затем выполните шаги 9–10.
 
 ---
 
@@ -415,7 +403,6 @@ systemctl status analytics-agent
 ├── agent.service            ← systemd unit
 ├── nginx.conf               ← конфиг Nginx
 ├── setup.sh                 ← скрипт автоустановки
-├── YandexInternalRootCA.crt ← SSL сертификат Яндекс Cloud (опционально)
 ├── chat_history.db          ← SQLite (создаётся автоматически)
 └── temp_data/               ← временные parquet файлы (автоочистка)
 ```
@@ -440,9 +427,6 @@ ss -tlnp | grep 8000
 ```bash
 # Проверьте доступность хоста и порта
 nc -zv your-clickhouse-host.example.com 8443
-
-# Для Яндекс Cloud — проверьте сертификат
-openssl s_client -connect your-cluster.mdb.yandexcloud.net:8443 -CAfile /root/clickhouse_analytics_agent/YandexInternalRootCA.crt
 ```
 
 ### 502 Bad Gateway в Nginx
@@ -472,18 +456,3 @@ nslookup servermagnetto.asktab.ru
 - Нормальное время ответа агента: 15–60 секунд
 - `proxy_read_timeout` в `nginx.conf` уже установлен на 600 секунд
 - Если проблема остаётся — проверьте `journalctl -u analytics-agent -f` на ошибки
-
----
-
-## Firewall (UFW) — повторная проверка
-
-```bash
-ufw status verbose
-```
-
-Должны быть открыты:
-- `22/tcp` — SSH
-- `80/tcp` — HTTP (для certbot ACME challenge и редиректа)
-- `443/tcp` — HTTPS
-
-Порт `8000` **не** должен быть открыт публично — uvicorn слушает только `127.0.0.1` через Nginx.
