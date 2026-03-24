@@ -1,6 +1,6 @@
 [Unit]
 Description=ClickHouse Analytics Agent (LangGraph + FastAPI)
-Documentation=https://github.com/Erofaxxx/langgraph_agent_v1
+Documentation=https://github.com/Erofaxxx/magnetto_agent_v1
 After=network-online.target
 Wants=network-online.target
 
