@@ -1,11 +1,15 @@
 ## Skill: Обнаружение и расследование аномалий
 
+**База данных:** `magnetto`
+**Основная витрина:** `dm_traffic_performance`
+**Метрики для мониторинга:** `visits`, `goal_314553735` (Все лиды), `bounces`, `new_users`
+
 ### Алгоритм расследования
 
 1. **Выгрузи исторические данные** — минимум 30–90 дней для baseline
 2. **Рассчитай baseline** — mean + std за период до аномалии
 3. **Флаги аномалий** — |z-score| > 2 или отклонение > 30% от среднего
-4. **Сегментируй** — найди, в каком сегменте (канал, кампания, устройство) концентрируется аномалия
+4. **Сегментируй** — найди, в каком сегменте (канал, кампания, устройство, проект) концентрируется аномалия
 5. **Сформулируй гипотезу** — аномалия в данных или в бизнесе?
 
 ### Z-score в Python
@@ -35,7 +39,7 @@ SELECT
     lagInFrame(SUM(visits), 52) OVER (ORDER BY toStartOfWeek(date)) AS visits_last_year,
     (SUM(visits) - lagInFrame(SUM(visits), 52) OVER (ORDER BY toStartOfWeek(date)))
     / lagInFrame(SUM(visits), 52) OVER (ORDER BY toStartOfWeek(date)) * 100 AS yoy_pct
-FROM dm_traffic_performance
+FROM magnetto.dm_traffic_performance
 WHERE date >= today() - INTERVAL 1 YEAR
 GROUP BY week
 ORDER BY week
@@ -46,24 +50,58 @@ ORDER BY week
 ```sql
 -- Разбивка по каналу в аномальный день:
 SELECT
+    utm_source,
     utm_medium,
     SUM(visits) AS visits,
-    SUM(revenue) AS revenue
-FROM dm_traffic_performance
+    SUM(goal_314553735) AS leads  -- Все лиды — magnetto
+FROM magnetto.dm_traffic_performance
 WHERE date = '2024-03-15'  -- аномальная дата
-GROUP BY utm_medium
+GROUP BY utm_source, utm_medium
 ORDER BY visits DESC
+```
+
+```sql
+-- Разбивка по проекту и устройству:
+SELECT
+    project_slug,
+    device_category,
+    SUM(visits) AS visits,
+    SUM(goal_314553735) AS leads
+FROM magnetto.dm_traffic_performance
+WHERE date = '2024-03-15'
+GROUP BY project_slug, device_category
+ORDER BY visits DESC
+```
+
+### Спам/бот-трафик
+
+Поле `goal_402733217` — флаг мусорного трафика. Резкий рост визитов при нулевых лидах — сигнал бот-атаки.
+
+```sql
+-- Доля мусорного трафика по дням:
+SELECT
+    date,
+    SUM(visits) AS visits,
+    SUM(goal_402733217) AS spam_sessions,
+    round(SUM(goal_402733217) / SUM(visits) * 100, 1) AS spam_pct,
+    SUM(goal_314553735) AS leads
+FROM magnetto.dm_traffic_performance
+WHERE date >= today() - 30
+GROUP BY date
+ORDER BY date
 ```
 
 ### Типичные причины аномалий
 
 | Паттерн | Вероятная причина |
 |---|---|
-| Резкий рост в один день | Акция, публикация, вирусный контент |
-| Резкое падение в один день | Технический сбой, блокировка, изменение UTM |
-| Постепенный тренд | Изменение алгоритма, сезонность, конкуренция |
+| Резкий рост визитов без роста лидов | Спам/боты (проверь goal_402733217), акция, публикация |
+| Резкое падение в один день | Технический сбой, блокировка домена, изменение UTM |
+| Постепенный тренд вниз | Изменение алгоритма, сезонность, конкуренция |
 | Аномалия в одном канале | Изменение ставок/бюджетов, отключение кампании |
-| Аномалия в одном устройстве | Технический сбой мобильной версии/приложения |
+| Аномалия в одном устройстве | Технический сбой мобильной версии |
+| Резкий рост лидов без роста трафика | Изменение формы/квиза, акция для тёплой базы |
+| Рост `project_slug` = 'site', падение ЖК-страниц | Смена посадочных страниц в рекламе |
 
 ### Вывод аномалий
 
@@ -76,4 +114,4 @@ anomalies['отклонение'] = anomalies['z_score'].apply(
 result = anomalies[['date', 'metric', 'отклонение']].to_markdown(index=False)
 ```
 
-Аномалия — исследуй, не игнорируй. Одна строка с 90% выручки — это сигнал, не норма.
+Аномалия — исследуй, не игнорируй. Рост трафика без роста лидов — это не успех, это сигнал.
