@@ -83,6 +83,16 @@ SKILLS: dict[str, dict] = {
         ),
         "full_path": _SKILLS_DIR / "segmentation.md",
     },
+    "goals_reference": {
+        "router_hint": (
+            "цель, цели, goal, goal_id, конверсия, лид, звонок, форма, заявка, "
+            "crm, crm оплачен, crm создан, amoCRM, jivo, квиз, марквиз, "
+            "какая цель, что означает цель, избранное, просмотр жк, "
+            "мусорный трафик, спам, 314553735, 332069614, колтрекинг, "
+            "has_lead, has_crm_paid, has_call, has_form, goals_in_visit"
+        ),
+        "full_path": _SKILLS_DIR / "goals_reference.md",
+    },
     "attribution": {
         "router_hint": (
             "атрибуция, data-driven атрибуция, вклад канала, Markov, Shapley, "
