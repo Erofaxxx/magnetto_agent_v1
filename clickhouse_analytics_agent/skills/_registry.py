@@ -24,12 +24,6 @@ SKILLS: dict[str, dict] = {
         ),
         "full_path": _SKILLS_DIR / "clickhouse_querying.md",
     },
-    "product_analytics": {
-        "router_hint": (
-          "товар|продукт|топ|sku|ассортимент|выручка по товарам|dm_products|dm_purchases|позиция|категория|штуки|количество"
-        ),
-        "full_path": _SKILLS_DIR / "product_analytics.md",
-    },
     "python_analysis": {
         "router_hint": (
             "анализ данных Python, рассчитать метрику, посчитать, сравнить значения, "
@@ -49,9 +43,9 @@ SKILLS: dict[str, dict] = {
     "campaign_analysis": {
         "router_hint": (
             "ROAS, CPC, CPM, CTR, CPA, кампании, расходы, бюджет, "
-            "рекламные кампании, utm_campaign, dm_campaigns, конверсия кампаний, "
-            "стоимость привлечения, окупаемость рекламы, spend,"
-            "first touch|last touch|атрибуция|откуда покупатели|dm_orders"
+            "рекламные кампании, utm_campaign, конверсия кампаний, лиды по каналу, "
+            "стоимость привлечения, откуда приходят лиды, эффективность канала, "
+            "first touch, last touch, откуда клиенты, dm_client_profile, dm_conversion_paths"
         ),
         "full_path": _SKILLS_DIR / "campaign_analysis.md",
     },
@@ -59,7 +53,8 @@ SKILLS: dict[str, dict] = {
         "router_hint": (
             "когорты, когортный анализ, удержание клиентов, retention, LTV, "
             "пожизненная ценность, dm_client_journey, dm_client_profile, "
-            "повторные покупки, клиенты по периодам, первая покупка"
+            "возврат клиентов, клиенты по периодам, первый лид, цикл сделки, "
+            "конверсия воронки по когортам"
         ),
         "full_path": _SKILLS_DIR / "cohort_analysis.md",
     },

@@ -1,7 +1,7 @@
-# Скилл: Аналитика каналов и атрибуция
+# Скилл: Аналитика каналов и кампаний
 
 Активируется при вопросах про: источники трафика, каналы, кампании, UTM, конверсию,
-откуда приходят покупатели, first touch, last touch, путь клиента.
+откуда приходят лиды, first touch, last touch, путь клиента до лида.
 
 ---
 
@@ -10,7 +10,10 @@
 Данные по **рекламным расходам отсутствуют** — нет витрины с ad spend.
 Метрики CPC, CPM, CPA, ROAS рассчитать **невозможно**. Не пытаться их считать.
 
-Доступны: трафик, конверсия, выручка по каналам, атрибуция заказов, пути клиентов.
+Таблиц `dm_orders`, `dm_purchases`, `dm_campaign_funnel` нет — это не ecommerce.
+Конверсия = **лид** (`has_lead = 1`), глубокая конверсия = **CRM оплата** (`has_crm_paid = 1`).
+
+Доступны: трафик, конверсия в лиды/CRM, пути клиентов.
 
 ---
 
@@ -19,12 +22,9 @@
 | Задача | Витрина |
 |--------|---------|
 | Трафик по каналу: визиты, отказы, глубина, динамика по дням | `dm_traffic_performance` |
-| Конверсия по каналу: CR, покупатели | `dm_campaign_funnel` |
-| Выручка и заказы с атрибуцией (first / last touch) | `dm_orders` |
-| Полный путь клиента до покупки, мультитач | `dm_conversion_paths` |
-
-Правило приоритета: для выручки по каналу — **всегда `dm_orders`**, не `dm_traffic_performance`.
-`dm_traffic_performance.revenue` — сессионная атрибуция, менее точная, подходит только для трендов.
+| Конверсия канала в лиды (по клиентам) | `dm_client_profile` (first_traffic_source / first_utm_*) |
+| Конверсия канала по last touch | `dm_client_journey` (последний визит до лида) |
+| Полный путь клиента до лида, мультитач | `dm_conversion_paths` |
 
 ---
 
@@ -34,218 +34,162 @@
 | Поле | Описание |
 |------|----------|
 | `date` | Дата |
+| `project_slug` | Проект (ЖК) |
 | `utm_source` | Источник трафика |
 | `utm_medium` | Тип трафика (cpc, organic, email...) |
 | `utm_campaign` | Кампания |
-| `device` | Устройство (desktop / mobile / tablet) |
-| `city` | Город |
+| `traffic_source` | Тип источника (ad, organic, direct, referral, ...) |
+| `search_engine` | Поисковая система |
+| `device_category` | Устройство (desktop / mobile / tablet) |
+| `region_city` | Город |
 | `visits` | Визиты |
 | `new_users` | Новые пользователи |
 | `bounces` | Отказы |
-| `total_duration` | Суммарное время на сайте (секунды) |
-| `total_pageviews` | Суммарные просмотры страниц |
-| `sessions_with_purchase` | Сессии с покупкой |
-| `revenue` | Выручка (сессионная, last touch) |
-| `search_engine` | Поисковая система (для органики) |
+| `total_duration_sec` | Суммарное время на сайте (секунды) |
+| `total_page_views` | Суммарные просмотры страниц |
+| `goal_*` | Счётчики целей (каждая цель — отдельная колонка) |
 
-### Метрики которые можно рассчитать
+### Ключевые цели (goal-колонки)
+| Группа | Колонки |
+|--------|---------|
+| Основная форма заявки | `goal_314553735` |
+| Звонки (колтрекинг) | `goal_314248561`, `goal_201619840`, `goal_201619843`, `goal_201619846` |
+| Формы / лиды | `goal_313904512`, `goal_314247265`, `goal_314247991`, `goal_338849075` |
+| CRM (создан/оплачен) | `goal_332069613`, `goal_332069614`, `goal_405315077`, `goal_405315078` |
+| Чат | `goal_349618756`, `goal_349618757`, `goal_349772279` |
+
+### Метрики трафика
 ```sql
 -- Трафик по каналу с качеством
 SELECT
+    traffic_source,
     utm_source,
-    sum(visits)                                          AS visits,
-    sum(new_users)                                       AS new_users,
-    round(sum(bounces) / sum(visits) * 100, 1)           AS bounce_rate_pct,
-    round(sum(total_duration) / sum(visits) / 60, 1)     AS avg_duration_min,
-    round(sum(total_pageviews) / sum(visits), 1)         AS avg_pageviews
+    sum(visits)                                                  AS visits,
+    sum(new_users)                                               AS new_users,
+    round(sum(bounces) / sum(visits) * 100, 1)                  AS bounce_rate_pct,
+    round(sum(total_duration_sec) / sum(visits) / 60, 1)        AS avg_duration_min,
+    round(sum(total_page_views) / sum(visits), 1)               AS avg_pageviews
 FROM dm_traffic_performance
-WHERE date >= today() - 30
-GROUP BY utm_source
+WHERE date >= today() - INTERVAL 30 DAY
+GROUP BY traffic_source, utm_source
 ORDER BY visits DESC
+LIMIT 50
 
 -- Динамика визитов по дням
-SELECT date, utm_source, sum(visits) AS visits
+SELECT
+    date,
+    traffic_source,
+    sum(visits) AS visits
 FROM dm_traffic_performance
-WHERE date >= today() - 30
-GROUP BY date, utm_source
+WHERE date >= today() - INTERVAL 30 DAY
+GROUP BY date, traffic_source
 ORDER BY date, visits DESC
 ```
 
----
-
-## dm_campaign_funnel — конверсия по каналу
-
-### Поля
-| Поле | Описание |
-|------|----------|
-| `utm_source` | Источник |
-| `utm_campaign` | Кампания |
-| `visits` | Всего визитов |
-| `sessions_with_purchase` | Сессий с покупкой *(Session track)* |
-| `revenue` | Выручка |
-| `pre_purchase_visits` | Визитов перед покупкой *(Session track)* |
-| `unique_clients_pre_purchase` | Уникальных клиентов до покупки *(Client track)* |
-| `unique_buyers` | Уникальных покупателей *(Client track)* |
-
-### ⚠️ КРИТИЧЕСКОЕ ПРЕДУПРЕЖДЕНИЕ — два несовместимых трека
-
-В таблице два трека измерения конверсии. Их **нельзя смешивать ни при каком условии**:
-
-- **Session track:** `visits` → `pre_purchase_visits` → `sessions_with_purchase`
-- **Client track:** `unique_clients_pre_purchase` → `unique_buyers`
-
-Делить `unique_buyers` на `visits` или `sessions_with_purchase` на `unique_clients_pre_purchase` — **ошибка**. Результат >100% или бессмысленное число — признак смешения треков.
-
-### Метрики
+### Конверсия в лиды из dm_traffic_performance (сессионная, ориентировочная)
 ```sql
--- CR по каналу (Session track)
+-- Лиды по каналу (session-based через goal-колонки):
 SELECT
+    traffic_source,
     utm_source,
-    sum(visits)                                                      AS visits,
-    sum(sessions_with_purchase)                                      AS purchases,
-    round(sum(sessions_with_purchase) / sum(visits) * 100, 2)       AS cr_pct,
-    sum(revenue)                                                     AS revenue
-FROM dm_campaign_funnel
-GROUP BY utm_source
-ORDER BY revenue DESC
-
--- CR по клиентам (Client track — отдельно, не смешивать с Session)
-SELECT
-    utm_source,
-    sum(unique_clients_pre_purchase)                                  AS clients_in_funnel,
-    sum(unique_buyers)                                                AS buyers,
-    round(sum(unique_buyers) / sum(unique_clients_pre_purchase) * 100, 2) AS client_cr_pct
-FROM dm_campaign_funnel
-GROUP BY utm_source
-ORDER BY buyers DESC
+    sum(visits)                                                                AS visits,
+    sum(goal_314553735 + goal_313904512 + goal_338849075)                      AS form_leads,
+    sum(goal_314248561 + goal_201619840 + goal_201619843 + goal_201619846)     AS calls,
+    round(sum(goal_314553735 + goal_313904512 + goal_338849075)
+          / nullIf(sum(visits), 0) * 100, 2)                                   AS form_cr_pct
+FROM dm_traffic_performance
+WHERE date >= today() - INTERVAL 30 DAY
+GROUP BY traffic_source, utm_source
+ORDER BY visits DESC
+LIMIT 50
 ```
 
 ---
 
-## dm_orders — атрибуция заказов (first touch / last touch)
+## dm_client_profile — конверсия по каналу привлечения (first touch)
 
-### Когда использовать вместо других витрин
-- Вопрос: "Откуда приходят покупатели?" → **dm_orders**, не dm_traffic_performance
-- Вопрос: "Выручка по каналу" → **dm_orders** (точная, per-order), не dm_traffic_performance (сессионная)
-- Вопрос: "Сравни first touch и last touch" → **dm_orders** (единственная витрина с обоими)
-- Вопрос: "Цикл сделки — сколько дней от первого визита до покупки" → **dm_orders**
-
-### Поля для атрибуции
-| Поле | Описание |
-|------|----------|
-| `order_id` | ID заказа |
-| `client_id` | ID клиента |
-| `date` | Дата заказа |
-| `order_revenue` | Точная выручка заказа |
-| `utm_source_first` | Источник **первого** визита клиента (first touch) |
-| `utm_campaign_first` | Кампания первого визита |
-| `utm_source_last` | Источник визита **в момент покупки** (last touch) |
-| `utm_campaign_last` | Кампания в момент покупки |
-| `days_to_purchase` | Дней от первого визита до заказа |
-| `client_visits_count` | Всего визитов клиента (за всё время) |
-| `device` | Устройство в момент покупки |
-| `city` | Город покупателя |
-
-### First touch vs Last touch
-
-**Last touch** (`utm_source_last`) — канал, который привёл клиента в момент покупки.
-Завышает роль ремаркетинга и брендового трафика.
-
-**First touch** (`utm_source_first`) — канал, с которого клиент узнал о бренде впервые.
-Показывает реальный вклад в привлечение новой аудитории.
-
-Для полной картины анализировать оба.
-
-### Типичные запросы
+Для вопроса "откуда пришли клиенты, ставшие лидами" — использовать `dm_client_profile`,
+а не `dm_traffic_performance` (там сессионная атрибуция).
 
 ```sql
--- Выручка и заказы по каналу (last touch)
+-- Конверсия в лид по первому источнику (first touch):
 SELECT
-    utm_source_last                      AS source,
-    count()                              AS orders,
-    round(sum(order_revenue))            AS revenue,
-    round(avg(order_revenue))            AS avg_check
-FROM dm_orders
-GROUP BY utm_source_last
-ORDER BY revenue DESC
+    first_traffic_source,
+    first_utm_source,
+    count()                                             AS total_clients,
+    countIf(has_lead = 1)                               AS leads,
+    countIf(has_crm_created = 1)                        AS crm_created,
+    countIf(has_crm_paid = 1)                           AS crm_paid,
+    round(countIf(has_lead = 1) / count() * 100, 2)    AS lead_cr_pct
+FROM dm_client_profile
+WHERE first_visit_date >= today() - INTERVAL 90 DAY
+GROUP BY first_traffic_source, first_utm_source
+ORDER BY total_clients DESC
+LIMIT 50
 
--- Цикл сделки по каналу (first touch)
+-- Цикл сделки по каналу (дней от первого визита до лида):
 SELECT
-    utm_source_first                     AS source,
-    count()                              AS orders,
-    round(avg(days_to_purchase))         AS avg_days_to_purchase,
-    round(avg(client_visits_count))      AS avg_visits_before_purchase
-FROM dm_orders
-GROUP BY utm_source_first
-ORDER BY orders DESC
-
--- Матрица first touch vs last touch (атрибуционный расход)
-SELECT
-    utm_source_first                     AS first_touch,
-    utm_source_last                      AS last_touch,
-    count()                              AS orders,
-    round(sum(order_revenue))            AS revenue
-FROM dm_orders
-GROUP BY first_touch, last_touch
-ORDER BY orders DESC
-LIMIT 20
-
--- Каналы с длинным циклом сделки (потенциал для ремаркетинга)
-SELECT
-    utm_source_first,
-    count()                              AS orders,
-    round(avg(days_to_purchase))         AS avg_days,
-    round(avg(order_revenue))            AS avg_check
-FROM dm_orders
-WHERE days_to_purchase > 0
-GROUP BY utm_source_first
-HAVING orders >= 5
-ORDER BY avg_days DESC
+    first_traffic_source,
+    first_utm_source,
+    count()                                  AS leads,
+    round(avg(days_to_first_lead), 1)        AS avg_days_to_lead,
+    round(avg(total_visits), 1)              AS avg_visits_before_lead
+FROM dm_client_profile
+WHERE has_lead = 1
+  AND days_to_first_lead >= 0
+GROUP BY first_traffic_source, first_utm_source
+HAVING leads >= 5
+ORDER BY leads DESC
 ```
 
 ---
 
 ## dm_conversion_paths — полный путь клиента
 
-### Когда использовать
-- "Сколько касаний до покупки в среднем?"
-- "Какой типичный путь клиента?"
-- "Какие последовательности каналов ведут к конверсии?"
-
 ### Поля
 | Поле | Тип | Описание |
 |------|-----|----------|
 | `client_id` | UInt64 | ID клиента |
-| `converted` | UInt8 | 1 если совершил покупку, 0 если нет |
-| `revenue` | Float64 | Выручка клиента |
+| `has_lead` | UInt8 | 1 = стал лидом |
+| `has_crm_created` | UInt8 | 1 = создан в CRM |
+| `has_crm_paid` | UInt8 | 1 = оплата в CRM |
 | `path_length` | UInt16 | Количество касаний (визитов) в пути |
 | `first_touch_date` | Date | Дата первого касания |
-| `purchase_date` | Date | Дата покупки |
-| `conversion_window_days` | UInt16 | Дней от первого касания до покупки |
+| `conversion_date` | Date | Дата конверсии (лида) |
+| `conversion_window_days` | UInt16 | Дней от первого касания до лида |
 | `channels_path` | Array(String) | Полный путь по каналам |
 | `channels_dedup_path` | Array(String) | Путь без повторов подряд |
-| `sources_path` | Array(String) | Путь по источникам (utm_source) |
-| `campaigns_path` | Array(String) | Путь по кампаниям |
+| `sources_path` | Array(String) | Путь по utm_source |
+| `campaigns_path` | Array(String) | Путь по utm_campaign |
 | `days_from_first_path` | Array(UInt16) | Дней от первого касания на каждом шаге |
 
 ### Типичные запросы
 
 ```sql
--- Среднее количество касаний до покупки
+-- Среднее количество касаний до лида
 SELECT
     round(avg(path_length))              AS avg_path_length,
     median(path_length)                  AS median_path_length,
-    round(avg(conversion_window_days))   AS avg_days_to_convert
+    round(avg(conversion_window_days))   AS avg_days_to_lead
 FROM dm_conversion_paths
-WHERE converted = 1
+WHERE has_lead = 1
 
--- Топ путей (дедублированных) по частоте
+-- Топ путей (дедублированных) по частоте среди конвертировавших в лид
 SELECT
     channels_dedup_path                  AS path,
-    count()                              AS clients,
-    round(sum(revenue))                  AS revenue
+    count()                              AS clients
 FROM dm_conversion_paths
-WHERE converted = 1
+WHERE has_lead = 1
+GROUP BY path
+ORDER BY clients DESC
+LIMIT 20
+
+-- Топ путей клиентов с CRM-оплатой
+SELECT
+    channels_dedup_path                  AS path,
+    count()                              AS clients
+FROM dm_conversion_paths
+WHERE has_crm_paid = 1
 GROUP BY path
 ORDER BY clients DESC
 LIMIT 20
@@ -253,10 +197,9 @@ LIMIT 20
 -- Распределение по длине пути
 SELECT
     path_length,
-    count()                              AS clients,
-    round(avg(revenue))                  AS avg_revenue
+    count()     AS clients
 FROM dm_conversion_paths
-WHERE converted = 1
+WHERE has_lead = 1
 GROUP BY path_length
 ORDER BY path_length
 ```
@@ -267,6 +210,7 @@ ORDER BY path_length
 
 - **Нет расходов** → не считать CPC, CPM, CPA, ROAS. Если пользователь просит ROAS — объяснить, что данных по расходам нет.
 - **Малые выборки** → при n < 5 ставить ⚠️ и предупреждать о ненадёжности.
-- **Период** → всегда указывать сравниваемые периоды явно (напр. "7–13 марта vs 28 февр.–6 марта").
-- **dm_traffic_performance vs dm_orders** → не складывать revenue из обеих таблиц, это один и тот же доход, просто по разной методике атрибуции.
-- **Воронка** → не смешивать session track и client track в dm_campaign_funnel (см. предупреждение выше).
+- **Период** → всегда указывать сравниваемые периоды явно.
+- **dm_traffic_performance vs dm_client_profile** → первая даёт сессионную конверсию (приблизительно), вторая — точную клиентскую конверсию по first touch.
+- **has_lead vs goal_*** → `has_lead` в dm_client_profile/dm_client_journey — надёжный флаг лида на уровне клиента. Goal-колонки в dm_traffic_performance — сессионные счётчики (могут считаться несколько раз с одного клиента).
+- **Сравнение first touch / last touch** → dm_client_profile даёт first_touch. Для last_touch использовать dm_client_journey: последний визит с `is_converting_visit = 1` или последний визит перед `first_lead_date`.
