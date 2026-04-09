@@ -146,5 +146,8 @@ def python_analysis(code: str, parquet_path: str) -> tuple[str, list[str]]:
         return content, []
 
 
+# ─── Sub-agent tools ─────────────────────────────────────────────────────────
+from tools_subagents import ask_direct_optimizer, ask_scoring_agent
+
 # ─── Exported list ────────────────────────────────────────────────────────────
-TOOLS = [list_tables, clickhouse_query, python_analysis]
+TOOLS = [list_tables, clickhouse_query, python_analysis, ask_direct_optimizer, ask_scoring_agent]
