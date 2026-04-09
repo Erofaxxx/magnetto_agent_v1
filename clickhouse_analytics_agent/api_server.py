@@ -643,13 +643,10 @@ async def get_table_data(
     try:
         from tools import _ch_lock, _get_ch_client
         ch = _get_ch_client()
-
-        def _run(q):
-            with _ch_lock:
-                return ch.execute_query(q)
-
-        result = await asyncio.to_thread(_run, sql)
-        count_result = await asyncio.to_thread(_run, count_sql)
+        with _ch_lock:
+            result = await asyncio.to_thread(ch.execute_query, sql)
+        with _ch_lock:
+            count_result = await asyncio.to_thread(ch.execute_query, count_sql)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -669,14 +666,11 @@ async def get_table_data(
         except Exception:
             pass
 
-    try:
-        columns = df.columns.tolist()
-        rows = [
-            [_serialize_value(cell) for cell in row]
-            for row in df.itertuples(index=False, name=None)
-        ]
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Serialization error: {exc}")
+    columns = df.columns.tolist()
+    rows = [
+        [_serialize_value(cell) for cell in row]
+        for row in df.itertuples(index=False, name=None)
+    ]
 
     return {
         "columns": columns,
