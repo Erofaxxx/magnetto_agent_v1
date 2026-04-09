@@ -103,6 +103,18 @@ SKILLS: dict[str, dict] = {
         ),
         "full_path": _SKILLS_DIR / "attribution.md",
     },
+    "subagent_guide": {
+        "router_hint": (
+            "ключевые слова директа, площадки, bad_keywords, bad_placements, "
+            "bad_queries, поисковые запросы, dm_direct_performance, "
+            "неэффективные ключи, минус-слова, РСЯ площадки, "
+            "скоринг клиентов, ретаргетинг, dm_active_clients_scoring, "
+            "dm_step_goal_impact, lift целей, dm_funnel_velocity, dm_path_templates, "
+            "паттерны каналов, пути конверсии, горячие клиенты, hot warm cold, "
+            "скорость воронки, кого ретаргетить"
+        ),
+        "full_path": _SKILLS_DIR / "subagent_guide.md",
+    },
 }
 
 
