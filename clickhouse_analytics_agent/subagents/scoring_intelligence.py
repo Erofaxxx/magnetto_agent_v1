@@ -56,10 +56,12 @@ _SYSTEM_PROMPT = """Ты — аналитик скоринга клиентов 
 class ScoringIntelligenceAgent(BaseSubAgent):
     """Sub-agent for client scoring and conversion path analytics."""
 
+    _SCHEMA_TABLES = ["dm_active_clients_scoring", "dm_step_goal_impact", "dm_funnel_velocity", "dm_path_templates"]
+
     def __init__(self, model: str = MODEL) -> None:
         skill_text = self._load_skill_files(_SKILL_FILES)
         prompt = _SYSTEM_PROMPT.replace("{skill_section}", skill_text)
-        super().__init__(system_prompt=prompt, max_iterations=10, model=model)
+        super().__init__(system_prompt=prompt, max_iterations=10, model=model, schema_tables=self._SCHEMA_TABLES)
 
 
 # ─── Singleton cache ──────────────────────────────────────────────────────────

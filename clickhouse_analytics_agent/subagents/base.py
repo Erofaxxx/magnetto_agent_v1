@@ -91,6 +91,7 @@ class BaseSubAgent:
         system_prompt: str,
         max_iterations: int = _DEFAULT_MAX_ITERATIONS,
         model: str = MODEL,
+        schema_tables: list[str] | None = None,
     ) -> None:
         if not OPENROUTER_API_KEY:
             raise ValueError("OPENROUTER_API_KEY is not set in .env")
@@ -102,8 +103,8 @@ class BaseSubAgent:
         # ── LLM ──────────────────────────────────────────────────────────
         self.llm = _create_subagent_llm(model, provider)
 
-        # ── Schema at startup ────────────────────────────────────────────
-        self.schema_section = self._fetch_schema_section()
+        # ── Schema at startup (filtered to relevant tables only) ─────────
+        self.schema_section = self._fetch_schema_section(schema_tables)
 
         # ── Finalise system prompt ───────────────────────────────────────
         self._system_prompt = system_prompt.format(
@@ -328,11 +329,13 @@ class BaseSubAgent:
     # ─── Schema fetch ─────────────────────────────────────────────────────────
 
     @staticmethod
-    def _fetch_schema_section() -> str:
-        """Fetch DB schema once at startup and return formatted section string."""
+    def _fetch_schema_section(table_names: list[str] | None = None) -> str:
+        """Fetch DB schema at startup, optionally filtered to specific tables."""
         try:
             from tools import _get_ch_client
             tables = _get_ch_client().list_tables()
+            if table_names:
+                tables = [t for t in tables if t.get("table") in table_names]
             schema_block = build_schema_block(tables)
             return (
                 "Схема таблиц (загружена при старте агента):\n\n"
