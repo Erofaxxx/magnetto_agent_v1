@@ -81,4 +81,24 @@ QUERIES: dict[str, dict] = {
         "sortable_columns": ["Query", "CriterionType", "CampaignName", "TargetingCategory", "roas", "goal_score_rate", "cost", "clicks", "cpc", "bounce_rate", "zone_status", "zone_reason"],
         "filterable_zone_status": True,
     },
+    "daily_briefing": {
+        "description": "Ежедневный брифинг по клиентам",
+        "sql": """
+            SELECT
+                client_id,
+                priority,
+                total_visits,
+                days_since_last_visit,
+                first_traffic_source,
+                lift_score,
+                next_target_action,
+                retarget_in_days,
+                action_conversion_lift,
+                analyst_comment,
+                report_date
+            FROM magnetto.report_daily_briefing
+        """,
+        "sortable_columns": ["client_id", "priority", "total_visits", "days_since_last_visit", "lift_score", "retarget_in_days", "action_conversion_lift", "report_date"],
+        "filterable_zone_status": False,
+    },
 }
