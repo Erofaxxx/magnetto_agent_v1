@@ -20,6 +20,21 @@ dm_step_goal_impact          dm_path_templates
 
 **Поля**: client_id, total_visits, last_visit_date, days_since_last, first_traffic_source, last_traffic_source, last_project, has_lead, lift_score, matched_goals, priority (hot/warm/cold), next_step, recommended_goal_id, recommended_goal_name, recommended_lift, optimal_retarget_days, snapshot_date.
 
+### Связь с кабинетами Директа
+
+У Magnetto 4 кабинета Директа, но один счётчик Метрики — **`cabinet_name` в этой витрине отсутствует**. Единственный мост к кабинету: `last_project` (slug из URL `/our-projects/[slug]`) джойним с `magnetto.project_cabinet_map`:
+
+```sql
+SELECT s.client_id, s.priority, s.lift_score, s.last_project,
+       coalesce(m.cabinet_name, 'unknown') AS cabinet_name
+FROM magnetto.dm_active_clients_scoring s
+LEFT JOIN magnetto.project_cabinet_map m
+    ON s.last_project = m.project_slug AND m.is_primary = 1
+WHERE s.snapshot_date = (SELECT max(snapshot_date) FROM magnetto.dm_active_clients_scoring)
+```
+
+Маппинг достоверен для `costura-town / niti / rivayat / origana`; остальные проекты и клиенты без `last_project` остаются без кабинета — всегда оговаривай долю `unknown` в ответе.
+
 ## Как вычисляется lift_score
 
 1. Для каждого визита клиента (шаги 1-10) разворачиваем goals_in_visit
@@ -61,6 +76,7 @@ LIMIT 50
 
 ### Таргет-лист для проекта
 ```sql
+-- last_project = основной slug кабинета (costura-town→tab1, niti→tab2, rivayat→tab3, origana→tab4)
 SELECT client_id, total_visits, days_since_last, lift_score, priority,
        recommended_goal_name, optimal_retarget_days
 FROM magnetto.dm_active_clients_scoring
@@ -68,6 +84,20 @@ WHERE snapshot_date = (SELECT max(snapshot_date) FROM magnetto.dm_active_clients
   AND last_project = 'costura-town'
   AND priority IN ('hot', 'warm')
 ORDER BY lift_score DESC
+```
+
+### Горячие клиенты по кабинету (через project_cabinet_map)
+```sql
+SELECT s.client_id, s.priority, s.lift_score, s.last_project,
+       s.recommended_goal_name, s.optimal_retarget_days
+FROM magnetto.dm_active_clients_scoring s
+INNER JOIN magnetto.project_cabinet_map m
+    ON s.last_project = m.project_slug AND m.is_primary = 1
+WHERE s.snapshot_date = (SELECT max(snapshot_date) FROM magnetto.dm_active_clients_scoring)
+  AND m.cabinet_name = 'audit-magnetto-tab3'   -- rivayat
+  AND s.priority IN ('hot', 'warm')
+ORDER BY s.lift_score DESC
+LIMIT 50
 ```
 
 ### Клиенты, которых пора ретаргетить СЕГОДНЯ

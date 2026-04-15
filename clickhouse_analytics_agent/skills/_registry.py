@@ -45,7 +45,9 @@ SKILLS: dict[str, dict] = {
             "ROAS, CPC, CPM, CTR, CPA, кампании, расходы, бюджет, "
             "рекламные кампании, utm_campaign, конверсия кампаний, лиды по каналу, "
             "стоимость привлечения, откуда приходят лиды, эффективность канала, "
-            "first touch, last touch, откуда клиенты, dm_client_profile, dm_conversion_paths"
+            "first touch, last touch, откуда клиенты, dm_client_profile, dm_conversion_paths, "
+            "кабинет директа, cabinet_name, audit-magnetto-tab, project_cabinet_map, "
+            "costura-town, niti, rivayat, origana, сравнение проектов"
         ),
         "full_path": _SKILLS_DIR / "campaign_analysis.md",
     },
@@ -111,7 +113,10 @@ SKILLS: dict[str, dict] = {
             "скоринг клиентов, ретаргетинг, dm_active_clients_scoring, "
             "dm_step_goal_impact, lift целей, dm_funnel_velocity, dm_path_templates, "
             "паттерны каналов, пути конверсии, горячие клиенты, hot warm cold, "
-            "скорость воронки, кого ретаргетить"
+            "скорость воронки, кого ретаргетить, "
+            "кабинет директа, cabinet_name, audit-magnetto-tab, "
+            "costura-town, niti, rivayat, origana, сравнение кабинетов, "
+            "project_cabinet_map, last_project"
         ),
         "full_path": _SKILLS_DIR / "subagent_guide.md",
     },

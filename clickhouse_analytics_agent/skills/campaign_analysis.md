@@ -7,13 +7,43 @@
 
 ## Доступные данные
 
-Данные по **рекламным расходам отсутствуют** — нет витрины с ad spend.
-Метрики CPC, CPM, CPA, ROAS рассчитать **невозможно**. Не пытаться их считать.
+Расходы и клики Директа есть в `dm_direct_performance` (см. отдельный skill). Для вопросов "какой канал привёл клиента", "откуда пришли", "first/last touch" — используй визитные витрины ниже.
 
 Таблиц `dm_orders`, `dm_purchases`, `dm_campaign_funnel` нет — это не ecommerce.
 Конверсия = **лид** (`has_lead = 1`), глубокая конверсия = **CRM оплата** (`has_crm_paid = 1`).
 
 Доступны: трафик, конверсия в лиды/CRM, пути клиентов.
+
+## Кабинеты и visit-based витрины
+
+У Magnetto 4 рекламных кабинета Яндекс Директа (`audit-magnetto-tab1..tab4`, по одному на проект: costura-town, niti, rivayat, origana), но **один общий счётчик Яндекс Метрики на все 4 проекта**. Поэтому:
+
+- Direct-based витрины (`dm_direct_performance`, `bad_keywords`, `bad_placements`, `bad_queries`, `campaigns_settings`, `adgroups_settings`, `ads_settings`) **разделены по кабинетам** через колонку `cabinet_name`.
+- Visit-based витрины (`dm_traffic_performance`, `dm_client_profile`, `dm_client_journey`, `dm_conversion_paths`, `dm_funnel_velocity`, `dm_step_goal_impact`, `dm_active_clients_scoring`, `dm_path_templates`) **не содержат cabinet_name** — на уровне визита нельзя сказать, с какого кабинета пришёл пользователь.
+
+### Мост visit ↔ cabinet через project_slug
+
+В `dm_client_profile.last_project` и `dm_client_journey.project_slug` лежит slug проекта (извлечён из URL `/our-projects/[slug]`). Для сопоставления с кабинетом джойни с таблицей `magnetto.project_cabinet_map`:
+
+```sql
+-- Клиентская воронка с привязкой к кабинету Директа
+SELECT
+    coalesce(m.cabinet_name, 'unmapped') AS cabinet_name,
+    count()                              AS clients,
+    countIf(p.has_lead = 1)              AS leads,
+    countIf(p.has_crm_paid = 1)          AS paid
+FROM dm_client_profile p
+LEFT JOIN magnetto.project_cabinet_map m
+    ON p.last_project = m.project_slug AND m.is_primary = 1
+WHERE p.first_visit_date >= today() - 90
+GROUP BY cabinet_name
+ORDER BY leads DESC
+```
+
+**Оговорки:**
+- Маппинг достоверен только для `last_project IN ('costura-town','niti','rivayat','origana')` — `is_primary = 1`.
+- Для прочих slug-ов (`zk-1712`, числовые `29/30/31`, второстепенные проекты) кабинета либо нет, либо маппинг неоднозначен → попадают в `unmapped`. Всегда упоминай долю `unmapped` в ответе.
+- Визиты без URL `/our-projects/[slug]` не имеют проекта вообще — их нельзя привязать к кабинету.
 
 ---
 
@@ -25,6 +55,8 @@
 | Конверсия канала в лиды (по клиентам) | `dm_client_profile` (first_traffic_source / first_utm_*) |
 | Конверсия канала по last touch | `dm_client_journey` (последний визит до лида) |
 | Полный путь клиента до лида, мультитач | `dm_conversion_paths` |
+| Расход / лиды / CRM по кабинетам Директа | `dm_direct_performance` (`cabinet_name`) |
+| Сведение visits × cabinet | через `last_project` → `project_cabinet_map` |
 
 ---
 
