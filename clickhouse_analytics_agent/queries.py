@@ -15,7 +15,6 @@ QUERIES: dict[str, dict] = {
         "description": "Плохие площадки",
         "sql": """
             SELECT
-                cabinet_name,
                 `Placement`,
                 `CampaignName`,
                 cost,
@@ -29,18 +28,18 @@ QUERIES: dict[str, dict] = {
                 bench_roas_campaign,
                 bench_goal_score_rate,
                 zone_status,
-                zone_reason
+                zone_reason,
+                cabinet_name
             FROM magnetto.bad_placements
             WHERE (zone_status != 'pending' OR zone_status IS NULL)
         """,
-        "sortable_columns": ["cabinet_name", "Placement", "CampaignName", "cpc", "cost", "clicks", "purchase_revenue", "roas", "goal_score_rate", "tier12_conversions", "med_cpc_campaign", "med_gsr_campaign", "med_roas_campaign", "zone_status"],
+        "sortable_columns": ["Placement", "CampaignName", "cpc", "cost", "clicks", "purchase_revenue", "roas", "goal_score_rate", "tier12_conversions", "med_cpc_campaign", "med_gsr_campaign", "med_roas_campaign", "zone_status", "cabinet_name"],
         "filterable_zone_status": True,
     },
     "bad_keywords": {
         "description": "Плохие ключевые запросы",
         "sql": """
             SELECT
-                cabinet_name,
                 `Criterion`,
                 `CampaignName`,
                 ad_network_type,
@@ -54,18 +53,18 @@ QUERIES: dict[str, dict] = {
                 med_roas,
                 tier12_conversions,
                 med_goal_score_rate,
-                zone_status
+                zone_status,
+                cabinet_name
             FROM magnetto.bad_keywords
             WHERE (zone_status != 'pending')
         """,
-        "sortable_columns": ["cabinet_name", "Criterion", "CampaignName", "AdGroupName", "cpc", "goal_score_rate", "avg_bid", "cpc_to_bid_ratio", "purchase_revenue", "roas", "med_roas", "tier12_conversions", "med_goal_score_rate", "zone_status"],
+        "sortable_columns": ["Criterion", "CampaignName", "AdGroupName", "cpc", "goal_score_rate", "avg_bid", "cpc_to_bid_ratio", "purchase_revenue", "roas", "med_roas", "tier12_conversions", "med_goal_score_rate", "zone_status", "cabinet_name"],
         "filterable_zone_status": True,
     },
     "bad_queries": {
         "description": "Плохие поисковые запросы",
         "sql": """
             SELECT
-                cabinet_name,
                 `Query`,
                 `CriterionType`,
                 `CampaignName`,
@@ -77,11 +76,12 @@ QUERIES: dict[str, dict] = {
                 `cpc`,
                 `bounce_rate`,
                 `zone_status`,
-                `zone_reason`
+                `zone_reason`,
+                cabinet_name
             FROM magnetto.bad_queries
             WHERE (zone_status != 'pending')
         """,
-        "sortable_columns": ["cabinet_name", "Query", "CriterionType", "CampaignName", "TargetingCategory", "roas", "goal_score_rate", "cost", "clicks", "cpc", "bounce_rate", "zone_status", "zone_reason"],
+        "sortable_columns": ["Query", "CriterionType", "CampaignName", "TargetingCategory", "roas", "goal_score_rate", "cost", "clicks", "cpc", "bounce_rate", "zone_status", "zone_reason", "cabinet_name"],
         "filterable_zone_status": True,
     },
     "daily_briefing": {
