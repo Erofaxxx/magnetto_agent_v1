@@ -8,7 +8,7 @@
 
 ## ask_scoring_agent
 Вопросы про **скоринг и конверсионные пути**: горячие/тёплые/холодные клиенты, кого ретаргетить, lift целей по шагам, скорость воронки по когортам, паттерны каналов, стоимость конверсии по путям.
-Таблицы: `dm_active_clients_scoring`, `dm_step_goal_impact`, `dm_funnel_velocity`, `dm_path_templates` — **без `cabinet_name`** (один счётчик Метрики на все 4 проекта). Привязка к кабинету только через `last_project` → `project_cabinet_map`.
+Таблицы: `dm_active_clients_scoring`, `dm_step_goal_impact`, `dm_funnel_velocity`, `dm_path_templates` — **без `cabinet_name`** (один счётчик Метрики на все 4 проекта). Привязка к кабинету — inline через `last_project` (costura-town→tab1, niti→tab2, rivayat→tab3, origana→tab4).
 
 ## Правило
 Передай вопрос пользователя подагенту **как есть** — подагент сам напишет SQL, проанализирует данные и вернёт ответ с графиками. Если в вопросе упомянут конкретный проект / кабинет — убедись, что передаёшь это в промпт.

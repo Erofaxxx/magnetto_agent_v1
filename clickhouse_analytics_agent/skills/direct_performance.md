@@ -19,6 +19,15 @@
 
 Правило: если вопрос про "расход", "клики", "кампании" без указания кабинета — агрегируй по всем; если упомянут проект / `costura` / `niti` / `rivayat` / `origana` — фильтруй `WHERE cabinet_name = '...'`.
 
+Маппинг 1:1, поэтому для visit-based витрин (`dm_client_profile.last_project`, `dm_active_clients_scoring.last_project` и т.п.) кабинет получается inline без JOIN-а:
+
+```sql
+transform(last_project,
+    ['costura-town', 'niti', 'rivayat', 'origana'],
+    ['audit-magnetto-tab1', 'audit-magnetto-tab2', 'audit-magnetto-tab3', 'audit-magnetto-tab4'],
+    'unmapped') AS cabinet_name
+```
+
 ## Воронка конверсий
 
 ```
