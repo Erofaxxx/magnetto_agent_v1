@@ -14,7 +14,7 @@
 **Ключевые поля**: **cabinet_name**, Criterion, MatchType, ad_network_type (SEARCH/AD_NETWORK), CampaignId, CampaignName, AdGroupId, AdGroupName, clicks, impressions, cost, ctr, cpc, avg_bid, cpc_to_bid_ratio, purchase_revenue, roas, goal_score, goal_score_rate, tier12_conversions, goal_rate_deviation, roas_deviation, med_goal_score_rate, med_roas, bid_zone, zone_status.
 
 ### magnetto.bad_placements — рейтинг площадок РСЯ
-Окно 60 дней. Только `AdNetworkType = 'AD_NETWORK'`. Окно `max(Date) - 60` считается **per-cabinet** — у каждого кабинета своя последняя дата (актуально для tab2, который остановлен 17.03.2026).
+Окно 60 дней. Только `AdNetworkType = 'AD_NETWORK'`. Окно `max(Date) - 60` считается **per-cabinet** — у каждого кабинета своя последняя дата.
 
 **Ключевые поля**: **cabinet_name**, Placement, CampaignId, CampaignName, cost, clicks, impressions, cpc, purchase_revenue, roas, goal_score, goal_score_rate, bounces, bounce_rate, is_recent, cpc_deviation, goal_rate_deviation, roas_deviation, avg_cpc_campaign, bench_roas_campaign, bench_goal_score_rate, zone_status, zone_reason.
 
