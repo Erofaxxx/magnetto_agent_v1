@@ -22,15 +22,24 @@ dm_step_goal_impact          dm_path_templates
 
 ### Связь с кабинетами Директа
 
-У Magnetto 4 кабинета Директа, но один счётчик Метрики — **`cabinet_name` в этой витрине отсутствует**. Единственный мост к кабинету: `last_project` (slug из URL `/our-projects/[slug]`) джойним с `magnetto.project_cabinet_map`:
+У Magnetto 4 кабинета Директа, но один счётчик Метрики — **`cabinet_name` в этой витрине отсутствует**. Единственный мост к кабинету — поле `last_project` (slug из URL `/our-projects/[slug]`). Маппинг 1:1, зашит inline через `transform()`:
+
+| project_slug   | cabinet_name           |
+|----------------|------------------------|
+| costura-town   | audit-magnetto-tab1    |
+| niti           | audit-magnetto-tab2    |
+| rivayat        | audit-magnetto-tab3    |
+| origana        | audit-magnetto-tab4    |
 
 ```sql
-SELECT s.client_id, s.priority, s.lift_score, s.last_project,
-       coalesce(m.cabinet_name, 'unknown') AS cabinet_name
-FROM magnetto.dm_active_clients_scoring s
-LEFT JOIN magnetto.project_cabinet_map m
-    ON s.last_project = m.project_slug AND m.is_primary = 1
-WHERE s.snapshot_date = (SELECT max(snapshot_date) FROM magnetto.dm_active_clients_scoring)
+SELECT
+    client_id, priority, lift_score, last_project,
+    transform(last_project,
+        ['costura-town', 'niti', 'rivayat', 'origana'],
+        ['audit-magnetto-tab1', 'audit-magnetto-tab2', 'audit-magnetto-tab3', 'audit-magnetto-tab4'],
+        'unknown')   AS cabinet_name
+FROM magnetto.dm_active_clients_scoring
+WHERE snapshot_date = (SELECT max(snapshot_date) FROM magnetto.dm_active_clients_scoring)
 ```
 
 Маппинг достоверен для `costura-town / niti / rivayat / origana`; остальные проекты и клиенты без `last_project` остаются без кабинета — всегда оговаривай долю `unknown` в ответе.
@@ -86,18 +95,20 @@ WHERE snapshot_date = (SELECT max(snapshot_date) FROM magnetto.dm_active_clients
 ORDER BY lift_score DESC
 ```
 
-### Горячие клиенты по кабинету (через project_cabinet_map)
+### Распределение горячих/тёплых клиентов по кабинетам
 ```sql
-SELECT s.client_id, s.priority, s.lift_score, s.last_project,
-       s.recommended_goal_name, s.optimal_retarget_days
-FROM magnetto.dm_active_clients_scoring s
-INNER JOIN magnetto.project_cabinet_map m
-    ON s.last_project = m.project_slug AND m.is_primary = 1
-WHERE s.snapshot_date = (SELECT max(snapshot_date) FROM magnetto.dm_active_clients_scoring)
-  AND m.cabinet_name = 'audit-magnetto-tab3'   -- rivayat
-  AND s.priority IN ('hot', 'warm')
-ORDER BY s.lift_score DESC
-LIMIT 50
+SELECT
+    transform(last_project,
+        ['costura-town', 'niti', 'rivayat', 'origana'],
+        ['audit-magnetto-tab1', 'audit-magnetto-tab2', 'audit-magnetto-tab3', 'audit-magnetto-tab4'],
+        'unmapped')                         AS cabinet_name,
+    countIf(priority = 'hot')               AS hot,
+    countIf(priority = 'warm')              AS warm,
+    round(avg(lift_score), 0)               AS avg_lift
+FROM magnetto.dm_active_clients_scoring
+WHERE snapshot_date = (SELECT max(snapshot_date) FROM magnetto.dm_active_clients_scoring)
+GROUP BY cabinet_name
+ORDER BY hot DESC
 ```
 
 ### Клиенты, которых пора ретаргетить СЕГОДНЯ

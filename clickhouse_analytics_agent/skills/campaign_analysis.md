@@ -23,27 +23,28 @@
 
 ### Мост visit ↔ cabinet через project_slug
 
-В `dm_client_profile.last_project` и `dm_client_journey.project_slug` лежит slug проекта (извлечён из URL `/our-projects/[slug]`). Для сопоставления с кабинетом джойни с таблицей `magnetto.project_cabinet_map`:
+В `dm_client_profile.last_project` и `dm_client_journey.project_slug` лежит slug проекта (извлечён из URL `/our-projects/[slug]`). Маппинг slug → кабинет — статический 1:1, зашит в SQL через `transform()`:
 
 ```sql
 -- Клиентская воронка с привязкой к кабинету Директа
 SELECT
-    coalesce(m.cabinet_name, 'unmapped') AS cabinet_name,
-    count()                              AS clients,
-    countIf(p.has_lead = 1)              AS leads,
-    countIf(p.has_crm_paid = 1)          AS paid
-FROM dm_client_profile p
-LEFT JOIN magnetto.project_cabinet_map m
-    ON p.last_project = m.project_slug AND m.is_primary = 1
-WHERE p.first_visit_date >= today() - 90
+    transform(last_project,
+        ['costura-town', 'niti', 'rivayat', 'origana'],
+        ['audit-magnetto-tab1', 'audit-magnetto-tab2', 'audit-magnetto-tab3', 'audit-magnetto-tab4'],
+        'unmapped')                AS cabinet_name,
+    count()                        AS clients,
+    countIf(has_lead = 1)          AS leads,
+    countIf(has_crm_paid = 1)      AS paid
+FROM dm_client_profile
+WHERE first_visit_date >= today() - 90
 GROUP BY cabinet_name
 ORDER BY leads DESC
 ```
 
 **Оговорки:**
-- Маппинг достоверен только для `last_project IN ('costura-town','niti','rivayat','origana')` — `is_primary = 1`.
-- Для прочих slug-ов (`zk-1712`, числовые `29/30/31`, второстепенные проекты) кабинета либо нет, либо маппинг неоднозначен → попадают в `unmapped`. Всегда упоминай долю `unmapped` в ответе.
-- Визиты без URL `/our-projects/[slug]` не имеют проекта вообще — их нельзя привязать к кабинету.
+- Маппинг достоверен для `last_project IN ('costura-town','niti','rivayat','origana')`.
+- Для прочих slug-ов (`zk-1712`, `grinvich`, числовые `29/30/31`, второстепенные проекты) попадают в `unmapped`. Всегда упоминай долю `unmapped` в ответе.
+- Визиты без URL `/our-projects/[slug]` не имеют проекта вообще — `last_project = ''`, тоже `unmapped`.
 
 ---
 

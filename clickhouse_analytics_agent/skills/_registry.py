@@ -46,7 +46,7 @@ SKILLS: dict[str, dict] = {
             "рекламные кампании, utm_campaign, конверсия кампаний, лиды по каналу, "
             "стоимость привлечения, откуда приходят лиды, эффективность канала, "
             "first touch, last touch, откуда клиенты, dm_client_profile, dm_conversion_paths, "
-            "кабинет директа, cabinet_name, audit-magnetto-tab, project_cabinet_map, "
+            "кабинет директа, cabinet_name, audit-magnetto-tab, "
             "costura-town, niti, rivayat, origana, сравнение проектов"
         ),
         "full_path": _SKILLS_DIR / "campaign_analysis.md",
@@ -115,8 +115,7 @@ SKILLS: dict[str, dict] = {
             "паттерны каналов, пути конверсии, горячие клиенты, hot warm cold, "
             "скорость воронки, кого ретаргетить, "
             "кабинет директа, cabinet_name, audit-magnetto-tab, "
-            "costura-town, niti, rivayat, origana, сравнение кабинетов, "
-            "project_cabinet_map, last_project"
+            "costura-town, niti, rivayat, origana, сравнение кабинетов, last_project"
         ),
         "full_path": _SKILLS_DIR / "subagent_guide.md",
     },
