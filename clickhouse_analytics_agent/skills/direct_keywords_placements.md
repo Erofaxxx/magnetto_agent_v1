@@ -1,16 +1,22 @@
 # Анализ ключевых слов и площадок Директа
 
+## Кабинеты Яндекс Директа
+
+У клиента 4 кабинета. Обе витрины (`bad_keywords`, `bad_placements`) собраны `UNION ALL` из 4 клонов и содержат колонку **`cabinet_name` LowCardinality(String)**: `audit-magnetto-tab1..tab4` (см. `direct_performance` skill для маппинга на проекты). Все внутренние бенчмарки и медианы (`med_goal_score_rate`, `med_roas`, `bench_roas_campaign`, `bench_goal_score_rate`, `avg_cpc_campaign`) считаются **per-cabinet × CampaignId** — зоны кампаний из разных кабинетов не смешиваются.
+
+Фильтруй по `cabinet_name` при вопросах о конкретном проекте; группируй по нему при сравнении кабинетов.
+
 ## Таблицы
 
 ### magnetto.bad_keywords — рейтинг ключевых фраз
 Окно 60 дней, обновление ежедневно. Только `CriterionType = 'KEYWORD'`.
 
-**Ключевые поля**: Criterion, MatchType, ad_network_type (SEARCH/AD_NETWORK), CampaignId, CampaignName, AdGroupId, AdGroupName, clicks, impressions, cost, ctr, cpc, avg_bid, cpc_to_bid_ratio, purchase_revenue, roas, goal_score, goal_score_rate, tier12_conversions, goal_rate_deviation, roas_deviation, med_goal_score_rate, med_roas, bid_zone, zone_status.
+**Ключевые поля**: **cabinet_name**, Criterion, MatchType, ad_network_type (SEARCH/AD_NETWORK), CampaignId, CampaignName, AdGroupId, AdGroupName, clicks, impressions, cost, ctr, cpc, avg_bid, cpc_to_bid_ratio, purchase_revenue, roas, goal_score, goal_score_rate, tier12_conversions, goal_rate_deviation, roas_deviation, med_goal_score_rate, med_roas, bid_zone, zone_status.
 
 ### magnetto.bad_placements — рейтинг площадок РСЯ
-Окно 60 дней. Только `AdNetworkType = 'AD_NETWORK'`.
+Окно 60 дней. Только `AdNetworkType = 'AD_NETWORK'`. Окно `max(Date) - 60` считается **per-cabinet** — у каждого кабинета своя последняя дата.
 
-**Ключевые поля**: Placement, CampaignId, CampaignName, cost, clicks, impressions, cpc, purchase_revenue, roas, goal_score, goal_score_rate, bounces, bounce_rate, is_recent, cpc_deviation, goal_rate_deviation, roas_deviation, avg_cpc_campaign, bench_roas_campaign, bench_goal_score_rate, zone_status, zone_reason.
+**Ключевые поля**: **cabinet_name**, Placement, CampaignId, CampaignName, cost, clicks, impressions, cpc, purchase_revenue, roas, goal_score, goal_score_rate, bounces, bounce_rate, is_recent, cpc_deviation, goal_rate_deviation, roas_deviation, avg_cpc_campaign, bench_roas_campaign, bench_goal_score_rate, zone_status, zone_reason.
 
 ## goal_score — взвешенный балл конверсий
 
@@ -69,13 +75,27 @@
 
 ### Красные ключи с расходом
 ```sql
-SELECT Criterion, MatchType, ad_network_type, CampaignName, AdGroupName,
+SELECT cabinet_name, Criterion, MatchType, ad_network_type, CampaignName, AdGroupName,
        clicks, cost, tier12_conversions, goal_score_rate, med_goal_score_rate,
        bid_zone, zone_status
 FROM magnetto.bad_keywords
 WHERE zone_status = 'red'
+  -- AND cabinet_name = 'audit-magnetto-tab1'   -- раскомментируй для конкретного проекта
 ORDER BY cost DESC
 LIMIT 30
+```
+
+### Срез красных ключей по кабинетам (где самая большая утечка)
+```sql
+SELECT cabinet_name,
+       count()                  AS red_keywords,
+       round(sum(cost))         AS wasted_cost,
+       sum(clicks)              AS wasted_clicks
+FROM magnetto.bad_keywords
+WHERE zone_status = 'red'
+  AND report_date = (SELECT max(report_date) FROM magnetto.bad_keywords)
+GROUP BY cabinet_name
+ORDER BY wasted_cost DESC
 ```
 
 ### Зелёные ключи — повысить ставки
@@ -116,15 +136,15 @@ ORDER BY bounce_rate DESC
 
 ### Ключи/площадки по кампании
 ```sql
--- Ключи
-SELECT Criterion, MatchType, ad_network_type, clicks, cost, tier12_conversions,
+-- Ключи (добавь cabinet_name, если кампании с тем же именем есть в нескольких кабинетах)
+SELECT cabinet_name, Criterion, MatchType, ad_network_type, clicks, cost, tier12_conversions,
        goal_score_rate, bid_zone, zone_status
 FROM magnetto.bad_keywords
 WHERE CampaignName ILIKE '%<название>%'
 ORDER BY cost DESC
 
 -- Площадки
-SELECT Placement, cost, clicks, roas, goal_score_rate, bounce_rate, zone_status, zone_reason
+SELECT cabinet_name, Placement, cost, clicks, roas, goal_score_rate, bounce_rate, zone_status, zone_reason
 FROM magnetto.bad_placements
 WHERE CampaignName ILIKE '%<название>%'
 ORDER BY cost DESC

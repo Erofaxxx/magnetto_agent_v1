@@ -4,7 +4,9 @@
 
 Рейтинг реальных поисковых запросов пользователей (search terms). В отличие от bad_keywords (фразы, которые добавили мы), здесь — запросы, которые Яндекс сматчил с нашими ключами. Окно **180 дней** (больше чем у keywords/placements). Обновление ежедневно.
 
-**Ключевые поля**: Query, CriterionType (KEYWORD/AUTOTARGETING), TargetingCategory, CampaignId, CampaignName, matched_keyword, clicks, impressions, cost, ctr, cpc, bounce_rate, days_active, is_chronic, is_recent, purchase_revenue, roas, goal_score, goal_score_rate, goal_rate_deviation, roas_deviation, bench_roas, bench_goal_score, zone_status, zone_reason.
+Витрина собрана `UNION ALL` из 4 клонов `direct_search_queries_goals_cab1..4` — содержит колонку **`cabinet_name` LowCardinality(String)** (`audit-magnetto-tab1..tab4`). Бенчмарки (`bench_roas`, `bench_goal_score`) и зоны считаются **per-cabinet × CampaignId**. Маппинг кабинет→проект см. в `direct_performance` skill.
+
+**Ключевые поля**: **cabinet_name**, Query, CriterionType (KEYWORD/AUTOTARGETING), TargetingCategory, CampaignId, CampaignName, matched_keyword, clicks, impressions, cost, ctr, cpc, bounce_rate, days_active, is_chronic, is_recent, purchase_revenue, roas, goal_score, goal_score_rate, goal_rate_deviation, roas_deviation, bench_roas, bench_goal_score, zone_status, zone_reason.
 
 ## Особенности метрик
 
@@ -41,12 +43,25 @@
 
 ### Красные запросы — кандидаты в минус-слова
 ```sql
-SELECT Query, matched_keyword, CampaignName,
+SELECT cabinet_name, Query, matched_keyword, CampaignName,
        clicks, cost, bounce_rate, goal_score, days_active, is_chronic, zone_reason
 FROM magnetto.bad_queries
 WHERE zone_status = 'red'
+  -- AND cabinet_name = 'audit-magnetto-tab2'   -- если спрашивают про конкретный проект
 ORDER BY cost DESC
 LIMIT 30
+```
+
+### Хронические красные запросы — срез по всем кабинетам
+```sql
+SELECT cabinet_name, count()          AS red_queries,
+       round(sum(cost))               AS wasted_cost,
+       sum(clicks)                    AS wasted_clicks
+FROM magnetto.bad_queries
+WHERE zone_status = 'red' AND is_chronic = 1
+  AND report_date = (SELECT max(report_date) FROM magnetto.bad_queries)
+GROUP BY cabinet_name
+ORDER BY wasted_cost DESC
 ```
 
 ### Хронические нецелевые — системная проблема

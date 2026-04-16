@@ -2,9 +2,22 @@
 
 ## Таблица magnetto.dm_direct_performance
 
-Основная витрина статистики Директа. Гранулярность: 1 строка = день × кампания × группа × тип сети. Данные с 01.11.2025, обновление ежедневно в 03:00.
+Основная витрина статистики Директа. Гранулярность: 1 строка = день × **кабинет** × кампания × группа × тип сети. Данные с 01.11.2025, обновление ежедневно в 03:00.
 
-**Поля**: date, campaign_id, campaign_name, adgroup_id, adgroup_name, ad_network_type (SEARCH/AD_NETWORK), impressions, clicks, cost (руб, с НДС), sessions, bounces, purchase_revenue, purchase_profit, leads_all, unique_calls, targeted_calls, order_created, order_paid, form_submissions, phone_clicks, quiz_completed, spam_traffic.
+**Поля**: date, **cabinet_name** (LowCardinality(String)), campaign_id, campaign_name, adgroup_id, adgroup_name, ad_network_type (SEARCH/AD_NETWORK), impressions, clicks, cost (руб, с НДС), sessions, bounces, purchase_revenue, purchase_profit, leads_all, unique_calls, targeted_calls, order_created, order_paid, form_submissions, phone_clicks, quiz_completed, spam_traffic.
+
+### Кабинеты Яндекс Директа (с апреля 2026)
+
+У клиента Magnetto **4 рекламных кабинета** — витрина агрегирует их через `UNION ALL` 4 клонов (`direct_custom_report_cab1..4`). Фильтруй/группируй по `cabinet_name`, если вопрос касается конкретного проекта.
+
+| cabinet_name          | ClientLogin в Директе             | Основной project_slug |
+|-----------------------|-----------------------------------|-----------------------|
+| `audit-magnetto-tab1` | `ksi-costura-urban-magnetto`      | `costura-town`        |
+| `audit-magnetto-tab2` | `ksi-niti-magnetto`               | `niti`                |
+| `audit-magnetto-tab3` | `ksi-rivayat-kongrada-magnetto`   | `rivayat`             |
+| `audit-magnetto-tab4` | `ksi-origana-grinvich-magnetto`   | `origana`             |
+
+Правило: если вопрос про "расход", "клики", "кампании" без указания кабинета — агрегируй по всем; если упомянут проект / `costura` / `niti` / `rivayat` / `origana` — фильтруй `WHERE cabinet_name = '...'`.
 
 ## Воронка конверсий
 
@@ -55,6 +68,7 @@ impressions → clicks → sessions → leads_all → order_created → order_pa
 - `spam_traffic` — особенно актуально для РСЯ. Коррекция: `clicks - spam_traffic` = чистые клики
 - `purchase_revenue/profit` — атрибуция Директа, не CRM. Для реальной выручки → order_created/paid
 - Данные за сегодня неполные → фильтр `WHERE date < today()`
+- `cabinet_name` — вторая ключевая ось после `date`; всегда выводи её в `GROUP BY`, когда сравниваешь кампании между кабинетами (имена кампаний в разных кабинетах могут пересекаться)
 
 ## SQL-шаблоны
 
@@ -130,6 +144,34 @@ FROM magnetto.dm_direct_performance
 WHERE date >= today() - 30 AND date < today()
   AND campaign_name ILIKE '%<название>%' AND adgroup_id != 0
 GROUP BY adgroup_id, adgroup_name
+ORDER BY cost DESC
+```
+
+### Сравнение кабинетов за период
+```sql
+SELECT cabinet_name,
+       sum(clicks)                                       AS clicks,
+       round(sum(cost))                                  AS cost,
+       sum(leads_all)                                    AS leads,
+       sum(order_created)                                AS crm_created,
+       sum(order_paid)                                   AS crm_paid,
+       round(sum(cost) / nullIf(sum(leads_all), 0))      AS cpl,
+       round(sum(cost) / nullIf(sum(order_paid), 0))     AS cac_paid
+FROM magnetto.dm_direct_performance
+WHERE date BETWEEN today() - 30 AND today() - 1
+GROUP BY cabinet_name
+ORDER BY cost DESC
+```
+
+### Срез по конкретному кабинету
+```sql
+SELECT campaign_name, ad_network_type,
+       round(sum(cost)) AS cost, sum(clicks) AS clicks, sum(leads_all) AS leads,
+       round(sum(cost) / nullIf(sum(leads_all), 0)) AS cpl
+FROM magnetto.dm_direct_performance
+WHERE cabinet_name = 'audit-magnetto-tab3'    -- rivayat
+  AND date >= today() - 30 AND date < today()
+GROUP BY campaign_id, campaign_name, ad_network_type
 ORDER BY cost DESC
 ```
 
