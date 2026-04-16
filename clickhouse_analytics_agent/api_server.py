@@ -573,11 +573,59 @@ def _serialize_value(v):
 
 _ALLOWED_ZONE_STATUSES = {"red", "green", "yellow"}
 
+# Адаптивный список кабинетов: вычитывается из ClickHouse (SELECT DISTINCT cabinet_name)
+# и кэшируется на _CABINET_CACHE_TTL секунд. При истечении TTL (или в случае ошибки
+# дискавери при пустом кэше) бэк пытается перечитать; пока cache непустой — отдаёт его.
+_CABINET_CACHE_TTL = 3600  # 1 час
+_cabinet_cache: dict = {"values": [], "fetched_at": 0.0}
+
+
+async def _get_available_cabinets(force_refresh: bool = False) -> list[str]:
+    """
+    Вернуть актуальный список кабинетов (LowCardinality(String)) из витрины
+    magnetto.bad_placements. Используется для:
+      • метаданных GET /api/tables (фронт сам строит селектор)
+      • валидации параметра cabinet_name в GET /api/tables/{query_name}
+    """
+    import time
+
+    now = time.time()
+    fresh = (now - _cabinet_cache["fetched_at"]) < _CABINET_CACHE_TTL
+    if not force_refresh and fresh and _cabinet_cache["values"]:
+        return _cabinet_cache["values"]
+
+    try:
+        from tools import _ch_lock, _get_ch_client
+        import pandas as _pd
+
+        ch = _get_ch_client()
+        sql = (
+            "SELECT DISTINCT cabinet_name FROM magnetto.bad_placements "
+            "WHERE cabinet_name != '' ORDER BY cabinet_name"
+        )
+        with _ch_lock:
+            result = await asyncio.to_thread(ch.execute_query, sql)
+        if result.get("success"):
+            df = _pd.read_parquet(result["parquet_path"])
+            cabinets = [str(v) for v in df["cabinet_name"].dropna().tolist()]
+            _cabinet_cache["values"] = cabinets
+            _cabinet_cache["fetched_at"] = now
+            return cabinets
+    except Exception:
+        # Сеть/ClickHouse упал — отдаём последние известные значения,
+        # даже если TTL истёк. Пустой список означает "ещё не грузили".
+        pass
+
+    return _cabinet_cache["values"]
+
 
 @app.get("/api/tables", tags=["tables"], summary="Список доступных именованных запросов")
 async def list_table_queries():
-    """Возвращает все доступные query_name с описаниями и списком колонок для сортировки."""
+    """Возвращает все доступные query_name с описаниями, колонками для сортировки
+    и доступными кабинетами (для фильтруемых запросов)."""
     from queries import QUERIES
+
+    cabinets = await _get_available_cabinets()
     return {
         "queries": [
             {
@@ -585,9 +633,12 @@ async def list_table_queries():
                 "description": q["description"],
                 "sortable_columns": q["sortable_columns"],
                 "filterable_zone_status": q.get("filterable_zone_status", False),
+                "filterable_cabinet": q.get("filterable_cabinet", False),
+                "cabinets": cabinets if q.get("filterable_cabinet") else [],
             }
             for name, q in QUERIES.items()
-        ]
+        ],
+        "cabinets": cabinets,  # общий список (одинаков для всех filterable_cabinet таблиц)
     }
 
 
@@ -598,10 +649,12 @@ async def get_table_data(
     sort_dir: str = "desc",
     limit: int = 50,
     zone_status: Optional[str] = None,
+    cabinet_name: Optional[str] = None,
 ):
     """
     Выполняет именованный SQL-запрос и возвращает табличные данные.
-    Параметры: sort_by, sort_dir (asc/desc), limit (1-1000), zone_status (red/green/yellow).
+    Параметры: sort_by, sort_dir (asc/desc), limit (1-1000),
+    zone_status (red/green/yellow), cabinet_name (из GET /api/tables → cabinets).
     """
     from queries import QUERIES
     import pandas as _pd
@@ -624,6 +677,20 @@ async def get_table_data(
                 detail=f"Invalid zone_status '{zone_status}'. Allowed: {sorted(_ALLOWED_ZONE_STATUSES)}",
             )
         sql += f"\nAND zone_status = '{zone_status}'"
+
+    if cabinet_name is not None:
+        if not query.get("filterable_cabinet"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Query '{query_name}' does not support cabinet filter",
+            )
+        allowed_cabinets = await _get_available_cabinets()
+        if cabinet_name not in allowed_cabinets:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown cabinet '{cabinet_name}'. Available: {allowed_cabinets}",
+            )
+        sql += f"\nAND cabinet_name = '{cabinet_name}'"
 
     # Count query uses filtered SQL without ORDER BY / LIMIT
     count_sql = f"SELECT count() FROM ({sql}) AS _subq LIMIT 1"

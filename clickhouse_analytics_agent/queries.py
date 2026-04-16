@@ -2,10 +2,13 @@
 Named ClickHouse queries for GET /api/tables/{query_name}.
 
 Структура каждого запроса:
-  description      — короткое описание для фронта
-  sql              — SELECT без ORDER BY и LIMIT (добавляются динамически)
-  sortable_columns — белый список колонок, по которым разрешена сортировка
-  filterable_zone_status — флаг: поддерживается ли фильтрация по zone_status
+  description             — короткое описание для фронта
+  sql                     — SELECT без ORDER BY и LIMIT (добавляются динамически)
+  sortable_columns        — белый список колонок, по которым разрешена сортировка
+  filterable_zone_status  — флаг: поддерживается ли фильтрация по zone_status
+  filterable_cabinet      — флаг: поддерживается ли фильтрация по cabinet_name
+                             (список доступных кабинетов бэкенд подтягивает
+                              из ClickHouse на лету, см. api_server._get_available_cabinets)
 
 Добавляй новые запросы сюда — endpoint подхватит их автоматически.
 """
@@ -35,6 +38,7 @@ QUERIES: dict[str, dict] = {
         """,
         "sortable_columns": ["Placement", "CampaignName", "cpc", "cost", "clicks", "purchase_revenue", "roas", "goal_score_rate", "tier12_conversions", "med_cpc_campaign", "med_gsr_campaign", "med_roas_campaign", "zone_status", "cabinet_name"],
         "filterable_zone_status": True,
+        "filterable_cabinet": True,
     },
     "bad_keywords": {
         "description": "Плохие ключевые запросы",
@@ -60,6 +64,7 @@ QUERIES: dict[str, dict] = {
         """,
         "sortable_columns": ["Criterion", "CampaignName", "AdGroupName", "cpc", "goal_score_rate", "avg_bid", "cpc_to_bid_ratio", "purchase_revenue", "roas", "med_roas", "tier12_conversions", "med_goal_score_rate", "zone_status", "cabinet_name"],
         "filterable_zone_status": True,
+        "filterable_cabinet": True,
     },
     "bad_queries": {
         "description": "Плохие поисковые запросы",
@@ -83,6 +88,7 @@ QUERIES: dict[str, dict] = {
         """,
         "sortable_columns": ["Query", "CriterionType", "CampaignName", "TargetingCategory", "roas", "goal_score_rate", "cost", "clicks", "cpc", "bounce_rate", "zone_status", "zone_reason", "cabinet_name"],
         "filterable_zone_status": True,
+        "filterable_cabinet": True,
     },
     "daily_briefing": {
         "description": "Ежедневный брифинг по клиентам",
