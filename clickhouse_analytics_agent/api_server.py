@@ -747,6 +747,229 @@ async def get_table_data(
     }
 
 
+# ─── Budget reallocation ──────────────────────────────────────────────────────
+# Мультитенантно: база читается из CLICKHOUSE_DATABASE (.env).
+# Для magnetto-агента это 'magnetto'; weekly-series собирается UNION'ом из
+# direct_custom_report_cab1..cab4, чтобы cabinet_name не терялся.
+
+
+def _budget_query_dicts(sql: str) -> list[dict]:
+    """Выполнить SELECT и вернуть список dict[column_name -> serialized_value]."""
+    from tools import _ch_lock, _get_ch_client
+
+    ch = _get_ch_client()
+    with _ch_lock:
+        qr = ch.client.query(sql)
+    cols = list(qr.column_names)
+    return [
+        {cols[i]: _serialize_value(row[i]) for i in range(len(cols))}
+        for row in qr.result_rows
+    ]
+
+
+def _safe_float(v) -> float:
+    try:
+        return float(v) if v is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+@app.get(
+    "/api/budget",
+    tags=["budget"],
+    summary="Рекомендации по перераспределению недельного бюджета",
+)
+async def get_budget(cabinet_name: Optional[str] = None):
+    """
+    Формат ответа: {summary, cabinets[], campaigns[]}.
+    cabinet_name — опциональный фильтр (tab1/tab2/tab3/tab4).
+    """
+    import re
+    from config import CLICKHOUSE_DATABASE as CH_DB
+
+    if cabinet_name is not None and not re.match(r"^[A-Za-z0-9_-]+$", cabinet_name):
+        raise HTTPException(status_code=400, detail="Invalid cabinet_name")
+
+    try:
+        check_sql = (
+            f"SELECT count() AS c FROM system.tables "
+            f"WHERE database='{CH_DB}' AND name='budget_reallocation'"
+        )
+        check_rows = await asyncio.to_thread(_budget_query_dicts, check_sql)
+        if not check_rows or int(check_rows[0].get("c") or 0) < 1:
+            raise HTTPException(
+                status_code=404,
+                detail=f"budget_reallocation не развёрнут в БД {CH_DB}",
+            )
+
+        cabs_sql = f"""
+            SELECT DISTINCT cabinet_name
+            FROM {CH_DB}.budget_reallocation
+            WHERE report_date = (SELECT max(report_date) FROM {CH_DB}.budget_reallocation)
+            ORDER BY cabinet_name
+        """
+        cab_rows = await asyncio.to_thread(_budget_query_dicts, cabs_sql)
+        cabinets = [str(r["cabinet_name"]) for r in cab_rows if r.get("cabinet_name")]
+
+        where_cab = f" AND cabinet_name = '{cabinet_name}'" if cabinet_name else ""
+        rec_sql = f"""
+            SELECT
+                campaign_id, campaign_name, cabinet_name,
+                is_active, meta_state, search_strategy, network_strategy,
+                explicit_weekly_budget, actual_weekly_spend_28d, current_weekly_budget,
+                clicks_28d, cost_28d, revenue_28d,
+                purchases_28d, calls_28d, orders_28d, cart_visits_28d, goal_score_28d,
+                clicks_7d, cost_7d, revenue_7d, purchases_7d,
+                roas_28d, roas_7d, cpo_28d, goal_score_rate, trend_factor,
+                roas_pct_rank, rank_multiplier, final_multiplier,
+                recommended_weekly_budget, delta_rub, delta_pct,
+                zone_status, rationale,
+                expected_weekly_cost, expected_weekly_revenue,
+                expected_weekly_purchases, expected_weekly_calls, expected_weekly_orders,
+                baseline_weekly_revenue, baseline_weekly_purchases, baseline_weekly_calls,
+                forecast_elasticity, forecast_conf_low, forecast_conf_high,
+                delta_revenue_weekly, delta_purchases_weekly, delta_roas,
+                toString(report_date) AS report_date
+            FROM {CH_DB}.budget_reallocation
+            WHERE report_date = (SELECT max(report_date) FROM {CH_DB}.budget_reallocation)
+              AND is_active = 1{where_cab}
+            ORDER BY cost_28d DESC
+        """
+        campaigns = await asyncio.to_thread(_budget_query_dicts, rec_sql)
+
+        # Weekly-series для magnetto: UNION cab1..cab4
+        series_sql = f"""
+            WITH src AS (
+                SELECT *, 'tab1' AS cab_tag FROM {CH_DB}.direct_custom_report_cab1 WHERE Date >= today() - 90
+                UNION ALL SELECT *, 'tab2' FROM {CH_DB}.direct_custom_report_cab2 WHERE Date >= today() - 90
+                UNION ALL SELECT *, 'tab3' FROM {CH_DB}.direct_custom_report_cab3 WHERE Date >= today() - 90
+                UNION ALL SELECT *, 'tab4' FROM {CH_DB}.direct_custom_report_cab4 WHERE Date >= today() - 90
+            )
+            SELECT
+                toUInt64(CampaignId) AS campaign_id,
+                toString(toStartOfWeek(Date, 1)) AS week,
+                round(sum(Cost))            AS cost,
+                round(sum(PurchaseRevenue) + 5000 * (
+                    sum(Conversions_314553735_LSCCD) * 10 + sum(Conversions_201619840_LSCCD) * 10 +
+                    sum(Conversions_201619843_LSCCD) * 10 + sum(Conversions_201619846_LSCCD) * 10 +
+                    sum(Conversions_332069613_LSCCD) * 10 + sum(Conversions_332069614_LSCCD) * 10 +
+                    sum(Conversions_322914144_LSCCD) *  3 + sum(Conversions_314248561_LSCCD) *  3 +
+                    sum(Conversions_176145847_LSCCD) *  3 + sum(Conversions_314248652_LSCCD) *  1
+                )) AS revenue,
+                sum(Conversions_332069614_LSCCD) AS purchases
+            FROM src
+            GROUP BY CampaignId, week
+            ORDER BY CampaignId, week
+        """
+        series_rows = await asyncio.to_thread(_budget_query_dicts, series_sql)
+
+        series_by_campaign: dict[str, list[dict]] = {}
+        for r in series_rows:
+            cid = str(r.get("campaign_id"))
+            series_by_campaign.setdefault(cid, []).append({
+                "week": r.get("week"),
+                "cost": _safe_float(r.get("cost")),
+                "revenue": _safe_float(r.get("revenue")),
+                "purchases": int(_safe_float(r.get("purchases"))),
+            })
+
+        for c in campaigns:
+            cid = str(c.get("campaign_id"))
+            c["weekly_series"] = series_by_campaign.get(cid, [])
+
+        summary = {
+            "report_date": campaigns[0]["report_date"] if campaigns else None,
+            "database": CH_DB,
+            "cabinet": cabinet_name,
+            "active_campaigns": len(campaigns),
+            "current_total_wb": 0.0,
+            "recommended_total_wb": 0.0,
+            "delta_total": 0.0,
+            "baseline_total_revenue_weekly": 0.0,
+            "expected_total_revenue_weekly": 0.0,
+            "delta_total_revenue_weekly": 0.0,
+            "baseline_total_purchases_weekly": 0.0,
+            "expected_total_purchases_weekly": 0.0,
+            "delta_total_purchases_weekly": 0.0,
+            "baseline_total_calls_weekly": 0.0,
+            "expected_total_calls_weekly": 0.0,
+            "delta_total_calls_weekly": 0.0,
+            "baseline_total_leads_weekly": 0.0,
+            "expected_total_leads_weekly": 0.0,
+            "delta_total_leads_weekly": 0.0,
+            "current_portfolio_roas": 0.0,
+            "expected_portfolio_roas": 0.0,
+            "zones": {"green": 0, "yellow": 0, "red": 0, "pending": 0},
+        }
+
+        for c in campaigns:
+            summary["current_total_wb"] += _safe_float(c.get("current_weekly_budget"))
+            summary["recommended_total_wb"] += _safe_float(c.get("recommended_weekly_budget"))
+            summary["delta_total"] += _safe_float(c.get("delta_rub"))
+            summary["baseline_total_revenue_weekly"] += _safe_float(c.get("baseline_weekly_revenue"))
+            summary["expected_total_revenue_weekly"] += _safe_float(c.get("expected_weekly_revenue"))
+            summary["delta_total_revenue_weekly"] += _safe_float(c.get("delta_revenue_weekly"))
+            summary["baseline_total_purchases_weekly"] += _safe_float(c.get("baseline_weekly_purchases"))
+            summary["expected_total_purchases_weekly"] += _safe_float(c.get("expected_weekly_purchases"))
+            summary["delta_total_purchases_weekly"] += _safe_float(c.get("delta_purchases_weekly"))
+            summary["baseline_total_calls_weekly"] += _safe_float(c.get("baseline_weekly_calls"))
+            summary["expected_total_calls_weekly"] += _safe_float(c.get("expected_weekly_calls"))
+            summary["delta_total_calls_weekly"] += (
+                _safe_float(c.get("expected_weekly_calls"))
+                - _safe_float(c.get("baseline_weekly_calls"))
+            )
+            leads_base_weekly = _safe_float(c.get("cart_visits_28d")) / 4.0
+            summary["baseline_total_leads_weekly"] += leads_base_weekly
+            current_wb = max(_safe_float(c.get("current_weekly_budget")), 1.0)
+            summary["expected_total_leads_weekly"] += (
+                leads_base_weekly * _safe_float(c.get("expected_weekly_cost")) / current_wb
+            )
+            z = c.get("zone_status")
+            if z in summary["zones"]:
+                summary["zones"][z] += 1
+
+        summary["delta_total_leads_weekly"] = (
+            summary["expected_total_leads_weekly"] - summary["baseline_total_leads_weekly"]
+        )
+
+        if summary["current_total_wb"] > 0:
+            summary["current_portfolio_roas"] = (
+                summary["baseline_total_revenue_weekly"] / summary["current_total_wb"]
+            )
+        if summary["recommended_total_wb"] > 0:
+            summary["expected_portfolio_roas"] = (
+                summary["expected_total_revenue_weekly"] / summary["recommended_total_wb"]
+            )
+
+        for k in (
+            "current_total_wb", "recommended_total_wb", "delta_total",
+            "baseline_total_revenue_weekly", "expected_total_revenue_weekly",
+            "delta_total_revenue_weekly",
+        ):
+            summary[k] = round(summary[k])
+        for k in (
+            "baseline_total_purchases_weekly", "expected_total_purchases_weekly",
+            "delta_total_purchases_weekly",
+            "baseline_total_calls_weekly", "expected_total_calls_weekly",
+            "delta_total_calls_weekly",
+            "baseline_total_leads_weekly", "expected_total_leads_weekly",
+            "delta_total_leads_weekly",
+        ):
+            summary[k] = round(summary[k], 1)
+        summary["current_portfolio_roas"] = round(summary["current_portfolio_roas"], 1)
+        summary["expected_portfolio_roas"] = round(summary["expected_portfolio_roas"], 1)
+
+        return {
+            "summary": summary,
+            "cabinets": cabinets,
+            "campaigns": campaigns,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"ClickHouse error: {exc}")
+
+
 # ─── Entry point ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     uvicorn.run("api_server:app", host=HOST, port=PORT, log_level="info")
