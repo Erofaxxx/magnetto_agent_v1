@@ -900,7 +900,7 @@ async def get_budget(cabinet_name: Optional[str] = None):
                 baseline_weekly_revenue, baseline_weekly_purchases, baseline_weekly_calls,
                 forecast_elasticity, forecast_conf_low, forecast_conf_high,
                 delta_revenue_weekly, delta_purchases_weekly, delta_roas,
-                toString(report_date) AS report_date
+                report_date
             FROM {CH_DB}.budget_reallocation
             WHERE report_date = (SELECT max(report_date) FROM {CH_DB}.budget_reallocation)
               AND is_active = 1{where_cab}
