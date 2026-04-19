@@ -751,6 +751,12 @@ async def get_table_data(
 # Мультитенантно: база читается из CLICKHOUSE_DATABASE (.env).
 # Для magnetto-агента это 'magnetto'; weekly-series собирается UNION'ом из
 # direct_custom_report_cab1..cab4, чтобы cabinet_name не терялся.
+#
+# Для weekly-series используется отдельный CH-пользователь (CLICKHOUSE_REPORTS_USER /
+# _PASSWORD в .env) с доступом только к direct_custom_report_cab*. Основной юзер
+# агента этих таблиц не видит, чтобы они не смешивались с витринами, с которыми
+# работают скиллы. Если env-переменные не заданы — weekly_series вернётся пустым
+# и sparklines на фронте просто не нарисуются.
 
 
 def _budget_query_dicts(sql: str) -> list[dict]:
@@ -760,6 +766,68 @@ def _budget_query_dicts(sql: str) -> list[dict]:
     ch = _get_ch_client()
     with _ch_lock:
         qr = ch.client.query(sql)
+    cols = list(qr.column_names)
+    return [
+        {cols[i]: _serialize_value(row[i]) for i in range(len(cols))}
+        for row in qr.result_rows
+    ]
+
+
+_reports_ch_client = None
+
+
+def _get_reports_client():
+    """
+    Singleton CH-клиент с кредами CLICKHOUSE_REPORTS_USER/_PASSWORD.
+    Возвращает None, если переменные не заданы или не удалось подключиться.
+    """
+    global _reports_ch_client
+    if _reports_ch_client is not None:
+        return _reports_ch_client
+
+    import os
+    user = (os.environ.get("CLICKHOUSE_REPORTS_USER") or "").strip()
+    password = (os.environ.get("CLICKHOUSE_REPORTS_PASSWORD") or "").strip()
+    if not user or not password:
+        return None
+
+    try:
+        import clickhouse_connect
+        from config import (
+            CLICKHOUSE_HOST,
+            CLICKHOUSE_PORT,
+            CLICKHOUSE_DATABASE,
+            CLICKHOUSE_SSL_CERT,
+        )
+        connect_kwargs = {
+            "host": CLICKHOUSE_HOST,
+            "port": CLICKHOUSE_PORT,
+            "username": user,
+            "password": password,
+            "database": CLICKHOUSE_DATABASE,
+            "secure": True,
+            "connect_timeout": 30,
+            "send_receive_timeout": 600,
+        }
+        if CLICKHOUSE_SSL_CERT:
+            connect_kwargs["verify"] = True
+            connect_kwargs["ca_cert"] = CLICKHOUSE_SSL_CERT
+        else:
+            connect_kwargs["verify"] = False
+        _reports_ch_client = clickhouse_connect.get_client(**connect_kwargs)
+        print(f"✅ Reports CH client connected as {user}")
+        return _reports_ch_client
+    except Exception as exc:
+        print(f"⚠️  Reports CH client init failed: {exc}")
+        return None
+
+
+def _reports_query_dicts(sql: str) -> list[dict]:
+    """Выполнить SELECT через reports-клиент. [] если клиент не настроен."""
+    client = _get_reports_client()
+    if client is None:
+        return []
+    qr = client.query(sql)
     cols = list(qr.column_names)
     return [
         {cols[i]: _serialize_value(row[i]) for i in range(len(cols))}
@@ -883,7 +951,7 @@ async def get_budget(cabinet_name: Optional[str] = None):
             GROUP BY CampaignId, week
             ORDER BY CampaignId, week
         """
-        series_rows = await asyncio.to_thread(_budget_query_dicts, series_sql)
+        series_rows = await asyncio.to_thread(_reports_query_dicts, series_sql)
 
         series_by_campaign: dict[str, list[dict]] = {}
         for r in series_rows:
