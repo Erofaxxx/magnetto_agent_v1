@@ -752,25 +752,18 @@ async def get_table_data(
 # Для magnetto-агента это 'magnetto'; weekly-series собирается UNION'ом из
 # direct_custom_report_cab1..cab4, чтобы cabinet_name не терялся.
 #
-# Для weekly-series используется отдельный CH-пользователь (CLICKHOUSE_REPORTS_USER /
-# _PASSWORD в .env) с доступом только к direct_custom_report_cab*. Основной юзер
-# агента этих таблиц не видит, чтобы они не смешивались с витринами, с которыми
-# работают скиллы. Если env-переменные не заданы — weekly_series вернётся пустым
-# и sparklines на фронте просто не нарисуются.
-
-
-def _budget_query_dicts(sql: str) -> list[dict]:
-    """Выполнить SELECT и вернуть список dict[column_name -> serialized_value]."""
-    from tools import _ch_lock, _get_ch_client
-
-    ch = _get_ch_client()
-    with _ch_lock:
-        qr = ch.client.query(sql)
-    cols = list(qr.column_names)
-    return [
-        {cols[i]: _serialize_value(row[i]) for i in range(len(cols))}
-        for row in qr.result_rows
-    ]
+# Весь /api/budget работает через отдельного CH-пользователя
+# (CLICKHOUSE_REPORTS_USER / _PASSWORD в .env). У основного юзера агента этих
+# таблиц не видно, чтобы они не смешивались с витринами, которые использует
+# чат-агент.
+#
+# Нужные права для reports-юзера:
+#   GRANT SELECT ON magnetto.budget_reallocation          TO <reports_user>;
+#   GRANT SELECT ON magnetto.direct_custom_report_cab1..4 TO <reports_user>;
+#
+# Если env-переменные не заданы — все основные запросы возвращают 500.
+# weekly_series — опциональный запрос (required=False): при недоступности
+# вернётся пустой массив, sparklines на фронте просто не нарисуются.
 
 
 _reports_ch_client = None
@@ -822,10 +815,20 @@ def _get_reports_client():
         return None
 
 
-def _reports_query_dicts(sql: str) -> list[dict]:
-    """Выполнить SELECT через reports-клиент. [] если клиент не настроен."""
+def _reports_query_dicts(sql: str, required: bool = True) -> list[dict]:
+    """
+    Выполнить SELECT через reports-клиент.
+    required=True (по умолчанию): если клиент не настроен — RuntimeError
+                                  (конвертируется в HTTP 500 выше по стеку).
+    required=False: если клиент не настроен — вернуть [] (мягкая деградация
+                    для опциональных запросов вроде weekly_series).
+    """
     client = _get_reports_client()
     if client is None:
+        if required:
+            raise RuntimeError(
+                "CLICKHOUSE_REPORTS_USER / CLICKHOUSE_REPORTS_PASSWORD не заданы в .env"
+            )
         return []
     qr = client.query(sql)
     cols = list(qr.column_names)
@@ -863,7 +866,7 @@ async def get_budget(cabinet_name: Optional[str] = None):
             f"SELECT count() AS c FROM system.tables "
             f"WHERE database='{CH_DB}' AND name='budget_reallocation'"
         )
-        check_rows = await asyncio.to_thread(_budget_query_dicts, check_sql)
+        check_rows = await asyncio.to_thread(_reports_query_dicts, check_sql)
         if not check_rows or int(check_rows[0].get("c") or 0) < 1:
             raise HTTPException(
                 status_code=404,
@@ -876,7 +879,7 @@ async def get_budget(cabinet_name: Optional[str] = None):
             WHERE report_date = (SELECT max(report_date) FROM {CH_DB}.budget_reallocation)
             ORDER BY cabinet_name
         """
-        cab_rows = await asyncio.to_thread(_budget_query_dicts, cabs_sql)
+        cab_rows = await asyncio.to_thread(_reports_query_dicts, cabs_sql)
         cabinets = [str(r["cabinet_name"]) for r in cab_rows if r.get("cabinet_name")]
 
         where_cab = f" AND cabinet_name = '{cabinet_name}'" if cabinet_name else ""
@@ -903,7 +906,7 @@ async def get_budget(cabinet_name: Optional[str] = None):
               AND is_active = 1{where_cab}
             ORDER BY cost_28d DESC
         """
-        campaigns = await asyncio.to_thread(_budget_query_dicts, rec_sql)
+        campaigns = await asyncio.to_thread(_reports_query_dicts, rec_sql)
 
         # Weekly-series для magnetto: UNION cab1..cab4.
         # SELECT-ом берём только нужные колонки и приводим типы явно —
@@ -951,7 +954,8 @@ async def get_budget(cabinet_name: Optional[str] = None):
             GROUP BY CampaignId, week
             ORDER BY CampaignId, week
         """
-        series_rows = await asyncio.to_thread(_reports_query_dicts, series_sql)
+        # weekly_series — опциональный; если reports-клиент не настроен, вернём []
+        series_rows = await asyncio.to_thread(_reports_query_dicts, series_sql, False)
 
         series_by_campaign: dict[str, list[dict]] = {}
         for r in series_rows:
