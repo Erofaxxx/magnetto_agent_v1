@@ -837,26 +837,48 @@ async def get_budget(cabinet_name: Optional[str] = None):
         """
         campaigns = await asyncio.to_thread(_budget_query_dicts, rec_sql)
 
-        # Weekly-series для magnetto: UNION cab1..cab4
+        # Weekly-series для magnetto: UNION cab1..cab4.
+        # SELECT-ом берём только нужные колонки и приводим типы явно —
+        # без этого CH ловит Code:386 (no supertype) когда одна из cabN-таблиц
+        # хранит Date/Conversions_* как String, а соседняя — как Date/Float.
+        cab_subquery = """
+            SELECT
+                toUInt64(CampaignId)                    AS CampaignId,
+                toDate(Date)                            AS Date,
+                toFloat64(Cost)                         AS Cost,
+                toFloat64(PurchaseRevenue)              AS PurchaseRevenue,
+                toFloat64(Conversions_314553735_LSCCD)  AS c_314553735,
+                toFloat64(Conversions_201619840_LSCCD)  AS c_201619840,
+                toFloat64(Conversions_201619843_LSCCD)  AS c_201619843,
+                toFloat64(Conversions_201619846_LSCCD)  AS c_201619846,
+                toFloat64(Conversions_332069613_LSCCD)  AS c_332069613,
+                toFloat64(Conversions_332069614_LSCCD)  AS c_332069614,
+                toFloat64(Conversions_322914144_LSCCD)  AS c_322914144,
+                toFloat64(Conversions_314248561_LSCCD)  AS c_314248561,
+                toFloat64(Conversions_176145847_LSCCD)  AS c_176145847,
+                toFloat64(Conversions_314248652_LSCCD)  AS c_314248652
+            FROM {CH_DB}.direct_custom_report_{tbl}
+            WHERE Date >= today() - 90
+        """
         series_sql = f"""
             WITH src AS (
-                SELECT *, 'tab1' AS cab_tag FROM {CH_DB}.direct_custom_report_cab1 WHERE Date >= today() - 90
-                UNION ALL SELECT *, 'tab2' FROM {CH_DB}.direct_custom_report_cab2 WHERE Date >= today() - 90
-                UNION ALL SELECT *, 'tab3' FROM {CH_DB}.direct_custom_report_cab3 WHERE Date >= today() - 90
-                UNION ALL SELECT *, 'tab4' FROM {CH_DB}.direct_custom_report_cab4 WHERE Date >= today() - 90
+                {cab_subquery.format(CH_DB=CH_DB, tbl='cab1')}
+                UNION ALL {cab_subquery.format(CH_DB=CH_DB, tbl='cab2')}
+                UNION ALL {cab_subquery.format(CH_DB=CH_DB, tbl='cab3')}
+                UNION ALL {cab_subquery.format(CH_DB=CH_DB, tbl='cab4')}
             )
             SELECT
-                toUInt64(CampaignId) AS campaign_id,
-                toString(toStartOfWeek(Date, 1)) AS week,
-                round(sum(Cost))            AS cost,
+                CampaignId                                AS campaign_id,
+                toString(toStartOfWeek(Date, 1))          AS week,
+                round(sum(Cost))                          AS cost,
                 round(sum(PurchaseRevenue) + 5000 * (
-                    sum(Conversions_314553735_LSCCD) * 10 + sum(Conversions_201619840_LSCCD) * 10 +
-                    sum(Conversions_201619843_LSCCD) * 10 + sum(Conversions_201619846_LSCCD) * 10 +
-                    sum(Conversions_332069613_LSCCD) * 10 + sum(Conversions_332069614_LSCCD) * 10 +
-                    sum(Conversions_322914144_LSCCD) *  3 + sum(Conversions_314248561_LSCCD) *  3 +
-                    sum(Conversions_176145847_LSCCD) *  3 + sum(Conversions_314248652_LSCCD) *  1
-                )) AS revenue,
-                sum(Conversions_332069614_LSCCD) AS purchases
+                    sum(c_314553735) * 10 + sum(c_201619840) * 10 +
+                    sum(c_201619843) * 10 + sum(c_201619846) * 10 +
+                    sum(c_332069613) * 10 + sum(c_332069614) * 10 +
+                    sum(c_322914144) *  3 + sum(c_314248561) *  3 +
+                    sum(c_176145847) *  3 + sum(c_314248652) *  1
+                ))                                        AS revenue,
+                sum(c_332069614)                          AS purchases
             FROM src
             GROUP BY CampaignId, week
             ORDER BY CampaignId, week
