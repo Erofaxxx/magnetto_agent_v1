@@ -751,15 +751,86 @@ async def get_table_data(
 # Мультитенантно: база читается из CLICKHOUSE_DATABASE (.env).
 # Для magnetto-агента это 'magnetto'; weekly-series собирается UNION'ом из
 # direct_custom_report_cab1..cab4, чтобы cabinet_name не терялся.
+#
+# Весь /api/budget работает через отдельного CH-пользователя
+# (CLICKHOUSE_REPORTS_USER / _PASSWORD в .env). У основного юзера агента этих
+# таблиц не видно, чтобы они не смешивались с витринами, которые использует
+# чат-агент.
+#
+# Нужные права для reports-юзера:
+#   GRANT SELECT ON magnetto.budget_reallocation          TO <reports_user>;
+#   GRANT SELECT ON magnetto.direct_custom_report_cab1..4 TO <reports_user>;
+#
+# Если env-переменные не заданы — все основные запросы возвращают 500.
+# weekly_series — опциональный запрос (required=False): при недоступности
+# вернётся пустой массив, sparklines на фронте просто не нарисуются.
 
 
-def _budget_query_dicts(sql: str) -> list[dict]:
-    """Выполнить SELECT и вернуть список dict[column_name -> serialized_value]."""
-    from tools import _ch_lock, _get_ch_client
+_reports_ch_client = None
 
-    ch = _get_ch_client()
-    with _ch_lock:
-        qr = ch.client.query(sql)
+
+def _get_reports_client():
+    """
+    Singleton CH-клиент с кредами CLICKHOUSE_REPORTS_USER/_PASSWORD.
+    Возвращает None, если переменные не заданы или не удалось подключиться.
+    """
+    global _reports_ch_client
+    if _reports_ch_client is not None:
+        return _reports_ch_client
+
+    import os
+    user = (os.environ.get("CLICKHOUSE_REPORTS_USER") or "").strip()
+    password = (os.environ.get("CLICKHOUSE_REPORTS_PASSWORD") or "").strip()
+    if not user or not password:
+        return None
+
+    try:
+        import clickhouse_connect
+        from config import (
+            CLICKHOUSE_HOST,
+            CLICKHOUSE_PORT,
+            CLICKHOUSE_DATABASE,
+            CLICKHOUSE_SSL_CERT,
+        )
+        connect_kwargs = {
+            "host": CLICKHOUSE_HOST,
+            "port": CLICKHOUSE_PORT,
+            "username": user,
+            "password": password,
+            "database": CLICKHOUSE_DATABASE,
+            "secure": True,
+            "connect_timeout": 30,
+            "send_receive_timeout": 600,
+        }
+        if CLICKHOUSE_SSL_CERT:
+            connect_kwargs["verify"] = True
+            connect_kwargs["ca_cert"] = CLICKHOUSE_SSL_CERT
+        else:
+            connect_kwargs["verify"] = False
+        _reports_ch_client = clickhouse_connect.get_client(**connect_kwargs)
+        print(f"✅ Reports CH client connected as {user}")
+        return _reports_ch_client
+    except Exception as exc:
+        print(f"⚠️  Reports CH client init failed: {exc}")
+        return None
+
+
+def _reports_query_dicts(sql: str, required: bool = True) -> list[dict]:
+    """
+    Выполнить SELECT через reports-клиент.
+    required=True (по умолчанию): если клиент не настроен — RuntimeError
+                                  (конвертируется в HTTP 500 выше по стеку).
+    required=False: если клиент не настроен — вернуть [] (мягкая деградация
+                    для опциональных запросов вроде weekly_series).
+    """
+    client = _get_reports_client()
+    if client is None:
+        if required:
+            raise RuntimeError(
+                "CLICKHOUSE_REPORTS_USER / CLICKHOUSE_REPORTS_PASSWORD не заданы в .env"
+            )
+        return []
+    qr = client.query(sql)
     cols = list(qr.column_names)
     return [
         {cols[i]: _serialize_value(row[i]) for i in range(len(cols))}
@@ -795,7 +866,7 @@ async def get_budget(cabinet_name: Optional[str] = None):
             f"SELECT count() AS c FROM system.tables "
             f"WHERE database='{CH_DB}' AND name='budget_reallocation'"
         )
-        check_rows = await asyncio.to_thread(_budget_query_dicts, check_sql)
+        check_rows = await asyncio.to_thread(_reports_query_dicts, check_sql)
         if not check_rows or int(check_rows[0].get("c") or 0) < 1:
             raise HTTPException(
                 status_code=404,
@@ -808,7 +879,7 @@ async def get_budget(cabinet_name: Optional[str] = None):
             WHERE report_date = (SELECT max(report_date) FROM {CH_DB}.budget_reallocation)
             ORDER BY cabinet_name
         """
-        cab_rows = await asyncio.to_thread(_budget_query_dicts, cabs_sql)
+        cab_rows = await asyncio.to_thread(_reports_query_dicts, cabs_sql)
         cabinets = [str(r["cabinet_name"]) for r in cab_rows if r.get("cabinet_name")]
 
         where_cab = f" AND cabinet_name = '{cabinet_name}'" if cabinet_name else ""
@@ -835,33 +906,56 @@ async def get_budget(cabinet_name: Optional[str] = None):
               AND is_active = 1{where_cab}
             ORDER BY cost_28d DESC
         """
-        campaigns = await asyncio.to_thread(_budget_query_dicts, rec_sql)
+        campaigns = await asyncio.to_thread(_reports_query_dicts, rec_sql)
 
-        # Weekly-series для magnetto: UNION cab1..cab4
+        # Weekly-series для magnetto: UNION cab1..cab4.
+        # SELECT-ом берём только нужные колонки и приводим типы явно —
+        # без этого CH ловит Code:386 (no supertype) когда одна из cabN-таблиц
+        # хранит Date/Conversions_* как String, а соседняя — как Date/Float.
+        cab_subquery = """
+            SELECT
+                toUInt64(CampaignId)                    AS CampaignId,
+                toDate(Date)                            AS Date,
+                toFloat64(Cost)                         AS Cost,
+                toFloat64(PurchaseRevenue)              AS PurchaseRevenue,
+                toFloat64(Conversions_314553735_LSCCD)  AS c_314553735,
+                toFloat64(Conversions_201619840_LSCCD)  AS c_201619840,
+                toFloat64(Conversions_201619843_LSCCD)  AS c_201619843,
+                toFloat64(Conversions_201619846_LSCCD)  AS c_201619846,
+                toFloat64(Conversions_332069613_LSCCD)  AS c_332069613,
+                toFloat64(Conversions_332069614_LSCCD)  AS c_332069614,
+                toFloat64(Conversions_322914144_LSCCD)  AS c_322914144,
+                toFloat64(Conversions_314248561_LSCCD)  AS c_314248561,
+                toFloat64(Conversions_176145847_LSCCD)  AS c_176145847,
+                toFloat64(Conversions_314248652_LSCCD)  AS c_314248652
+            FROM {CH_DB}.direct_custom_report_{tbl}
+            WHERE Date >= today() - 90
+        """
         series_sql = f"""
             WITH src AS (
-                SELECT *, 'tab1' AS cab_tag FROM {CH_DB}.direct_custom_report_cab1 WHERE Date >= today() - 90
-                UNION ALL SELECT *, 'tab2' FROM {CH_DB}.direct_custom_report_cab2 WHERE Date >= today() - 90
-                UNION ALL SELECT *, 'tab3' FROM {CH_DB}.direct_custom_report_cab3 WHERE Date >= today() - 90
-                UNION ALL SELECT *, 'tab4' FROM {CH_DB}.direct_custom_report_cab4 WHERE Date >= today() - 90
+                {cab_subquery.format(CH_DB=CH_DB, tbl='cab1')}
+                UNION ALL {cab_subquery.format(CH_DB=CH_DB, tbl='cab2')}
+                UNION ALL {cab_subquery.format(CH_DB=CH_DB, tbl='cab3')}
+                UNION ALL {cab_subquery.format(CH_DB=CH_DB, tbl='cab4')}
             )
             SELECT
-                toUInt64(CampaignId) AS campaign_id,
-                toString(toStartOfWeek(Date, 1)) AS week,
-                round(sum(Cost))            AS cost,
+                CampaignId                                AS campaign_id,
+                toString(toStartOfWeek(Date, 1))          AS week,
+                round(sum(Cost))                          AS cost,
                 round(sum(PurchaseRevenue) + 5000 * (
-                    sum(Conversions_314553735_LSCCD) * 10 + sum(Conversions_201619840_LSCCD) * 10 +
-                    sum(Conversions_201619843_LSCCD) * 10 + sum(Conversions_201619846_LSCCD) * 10 +
-                    sum(Conversions_332069613_LSCCD) * 10 + sum(Conversions_332069614_LSCCD) * 10 +
-                    sum(Conversions_322914144_LSCCD) *  3 + sum(Conversions_314248561_LSCCD) *  3 +
-                    sum(Conversions_176145847_LSCCD) *  3 + sum(Conversions_314248652_LSCCD) *  1
-                )) AS revenue,
-                sum(Conversions_332069614_LSCCD) AS purchases
+                    sum(c_314553735) * 10 + sum(c_201619840) * 10 +
+                    sum(c_201619843) * 10 + sum(c_201619846) * 10 +
+                    sum(c_332069613) * 10 + sum(c_332069614) * 10 +
+                    sum(c_322914144) *  3 + sum(c_314248561) *  3 +
+                    sum(c_176145847) *  3 + sum(c_314248652) *  1
+                ))                                        AS revenue,
+                sum(c_332069614)                          AS purchases
             FROM src
             GROUP BY CampaignId, week
             ORDER BY CampaignId, week
         """
-        series_rows = await asyncio.to_thread(_budget_query_dicts, series_sql)
+        # weekly_series — опциональный; если reports-клиент не настроен, вернём []
+        series_rows = await asyncio.to_thread(_reports_query_dicts, series_sql, False)
 
         series_by_campaign: dict[str, list[dict]] = {}
         for r in series_rows:
